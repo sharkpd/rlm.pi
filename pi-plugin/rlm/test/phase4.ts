@@ -47,6 +47,105 @@ async function testRecursionBridge(): Promise<boolean> {
   return pass;
 }
 
+/** Token-free: prove recursive child cost is debited from the parent's budget guard. */
+async function testChildBudgetPropagation(): Promise<boolean> {
+  let pass = true;
+  const log = (n: string, ok: boolean, extra = "") => {
+    console.log(`${ok ? "✓" : "✗"} ${n}${extra ? `  — ${extra}` : ""}`);
+    if (!ok) pass = false;
+  };
+
+  let debitedCost = 0;
+  let debitedTokens = 0;
+  const run: RunRlm = async (input) => {
+    return {
+      answer: `child(${String(input.context).slice(0, 8)})`,
+      iterations: 1,
+      costUsd: 0.10,
+      inputTokens: 500,
+      outputTokens: 200,
+      durationMs: 0,
+    };
+  };
+  const llm: LlmBridge = {
+    llmQuery: async () => "",
+    llmQueryBatched: async (ps) => ps.map(() => ""),
+  };
+  const handlers = createRlmHandlers({
+    run,
+    llm,
+    maxDepth: 3,
+    maxConcurrent: 2,
+    onChildUsage: (costUsd, inputTokens, outputTokens) => {
+      debitedCost += costUsd;
+      debitedTokens += inputTokens + outputTokens;
+    },
+  });
+
+  // Run two sequential rlm_query children; both should debit.
+  await handlers.rlmQuery("alpha", null, 0);
+  await handlers.rlmQuery("beta", null, 0);
+
+  log(
+    "R1b: child cost debited from parent after each rlm_query",
+    Math.abs(debitedCost - 0.20) < 1e-9,
+    `$${debitedCost.toFixed(4)}`,
+  );
+  log(
+    "R1b: child tokens debited from parent",
+    debitedTokens === 1400,
+    `${debitedTokens}`,
+  );
+
+  return pass;
+}
+
+/** Token-free: prove pre-spawn guard refuses children when budget/timeout is exhausted. */
+async function testPreSpawnGuard(): Promise<boolean> {
+  let pass = true;
+  const log = (n: string, ok: boolean, extra = "") => {
+    console.log(`${ok ? "✓" : "✗"} ${n}${extra ? `  — ${extra}` : ""}`);
+    if (!ok) pass = false;
+  };
+
+  let spawnCount = 0;
+  const run: RunRlm = async () => {
+    spawnCount++;
+    return { answer: "ok", iterations: 1, costUsd: 0, inputTokens: 0, outputTokens: 0, durationMs: 0 };
+  };
+  const llm: LlmBridge = {
+    llmQuery: async () => "",
+    llmQueryBatched: async (ps) => ps.map(() => ""),
+  };
+
+  // Budget exhausted — should NOT spawn.
+  spawnCount = 0;
+  const h0 = createRlmHandlers({ run, llm, maxDepth: 3, maxConcurrent: 2, remainingBudget: () => ({ budgetUsd: 0 }) });
+  const r0 = await h0.rlmQuery("x", null, 0);
+  log("F-spawn: budget=0 refuses child spawn", r0 === "Error: budget exhausted", r0);
+  log("F-spawn: no run() called when budget exhausted", spawnCount === 0, `spawned ${spawnCount}`);
+
+  // Budget negative — should NOT spawn.
+  const hNeg = createRlmHandlers({ run, llm, maxDepth: 3, maxConcurrent: 2, remainingBudget: () => ({ budgetUsd: -0.5 }) });
+  const rNeg = await hNeg.rlmQuery("x", null, 0);
+  log("F-spawn: budget<0 refuses child spawn", rNeg === "Error: budget exhausted", rNeg);
+
+  // Timeout exhausted — should NOT spawn.
+  spawnCount = 0;
+  const hT = createRlmHandlers({ run, llm, maxDepth: 3, maxConcurrent: 2, remainingBudget: () => ({ timeoutMs: 0 }) });
+  const rT = await hT.rlmQuery("x", null, 0);
+  log("F-spawn: timeout=0 refuses child spawn", rT === "Error: timeout exhausted", rT);
+  log("F-spawn: no run() called when timeout exhausted", spawnCount === 0, `spawned ${spawnCount}`);
+
+  // Budget available — SHOULD spawn normally.
+  spawnCount = 0;
+  const hOk = createRlmHandlers({ run, llm, maxDepth: 3, maxConcurrent: 2, remainingBudget: () => ({ budgetUsd: 1.0 }) });
+  const rOk = await hOk.rlmQuery("x", null, 0);
+  log("F-spawn: budget>0 spawns child normally", rOk === "ok" && spawnCount === 1, `${rOk} spawned=${spawnCount}`);
+
+  return pass;
+}
+
 function pick(reg: ModelRegistry, provider: string, id: string): Model<Api> | undefined {
   return reg.getAvailable().find((m) => m.provider === provider && m.id === id);
 }
@@ -55,9 +154,33 @@ async function main() {
   const recursionOk = await testRecursionBridge();
   if (!recursionOk) process.exit(1);
 
+  const budgetOk = await testChildBudgetPropagation();
+  if (!budgetOk) process.exit(1);
+
+  const guardOk = await testPreSpawnGuard();
+  if (!guardOk) process.exit(1);
+
   const authStorage = AuthStorage.create();
   const registry = MR.create(authStorage);
   const available = registry.getAvailable();
+  if (available.length > 0) {
+    const model = cheapestModel(registry) ?? available[0]!;
+    const overrideEngine = createEngine({
+      smartModel: model,
+      workerModel: model,
+      registry,
+      config: DEFAULT_CONFIG,
+    });
+    const badOverride = await overrideEngine({
+      rootPrompt: "unused",
+      context: "unused",
+      depth: 0,
+      smartModelOverride: "missing/model",
+    });
+    const ok = badOverride.answer === "Error: unknown model override 'missing/model'";
+    console.log(`${ok ? "✓" : "✗"} rlm_query unknown model override returns an error`);
+    if (!ok) process.exit(1);
+  }
   if (process.env.RLM_TEST_LIVE !== "1") {
     console.log(`\navailable models: ${available.length}. Set RLM_TEST_LIVE=1 to run the engine live.`);
     return;

@@ -13,6 +13,7 @@ function check(name: string, cond: boolean, extra = "") {
 }
 
 async function main() {
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   // Set a provider key BEFORE spawning, to prove the sandbox env is sanitized.
   process.env.ANTHROPIC_API_KEY = "sk-should-not-be-visible";
   process.env.OPENAI_API_KEY = "sk-also-hidden";
@@ -73,6 +74,50 @@ async function main() {
   // sandbox still alive after timeout
   r = await sandbox.exec("print('alive')");
   check("sandbox survives a timed-out block", r.stdout.trim() === "alive", r.stdout.trim());
+
+  // M5: context restored from context_0 after the model clobbers it.
+  r = await sandbox.exec("context = 'clobbered'");
+  r = await sandbox.exec("print(type(context).__name__, len(context))");
+  check("M5: context restored from context_0 after clobber", r.stdout.trim() === "list 3", r.stdout.trim());
+
+  // H3: a slow batched sub-LLM call must NOT trip the per-cell SIGALRM (paused while blocked in _rpc).
+  const slow = await PythonSandbox.spawn({
+    depth: 1,
+    execTimeoutS: 1,
+    handlers: {
+      llmQueryBatched: async (prompts) => {
+        await sleep(2000);
+        return prompts.map((_, i) => `SLOW${i}`);
+      },
+    },
+  });
+  r = await slow.exec("print(llm_query_batched(['a', 'b']))");
+  check(
+    "H3: slow batched call does not trip exec timeout",
+    r.stdout.includes("SLOW0") && r.stdout.includes("SLOW1") && !r.stderr.includes("timeout"),
+    r.stderr.trim().slice(0, 80),
+  );
+  // Local CPU is still bounded: a busy loop still times out.
+  r = await slow.exec("while True:\n    pass");
+  check("H3: local CPU loop still bounded by exec timeout", r.stderr.includes("timeout"), r.stderr.trim().slice(0, 80));
+  await slow.dispose();
+
+  // H4: a large (≥5MB) context loads via temp file instead of one giant JSONL line.
+  const big = "x".repeat(5 * 1024 * 1024);
+  const bigSb = await PythonSandbox.spawn({ depth: 1 });
+  await bigSb.loadContext(big);
+  r = await bigSb.exec("print(len(context))");
+  check("H4: ≥5MB context loads and is readable", r.stdout.trim() === String(5 * 1024 * 1024), r.stdout.trim());
+  await bigSb.dispose();
+
+  // R2: a subprocess writing to fd 1 must not crash the protocol pump.
+  const dirtySb = await PythonSandbox.spawn({ depth: 1 });
+  await dirtySb.loadContext("hello");
+  r = await dirtySb.exec(
+    "import os, subprocess; os.write(1, b'NOT JSON\\n'); print(context)",
+  );
+  check("R2: non-JSON fd-1 write does not crash the pump", r.stdout.trim() === "hello", r.stderr.trim().slice(0, 80));
+  await dirtySb.dispose();
 
   await sandbox.dispose();
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

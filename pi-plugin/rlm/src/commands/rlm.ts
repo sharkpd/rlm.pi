@@ -15,6 +15,7 @@ import { relative, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { RlmController } from "../mode/rlm-mode.ts";
 import { clearRlmStatus } from "../ui/status.ts";
+import { createTreeWidget } from "../ui/tree-widget.ts";
 import { formatCost, formatTokens } from "../ui/theme.ts";
 
 interface ParsedArgs {
@@ -82,28 +83,44 @@ export function registerRlmCommand(pi: ExtensionAPI, controller: RlmController):
         return;
       }
 
+      let handle;
       try {
-        await controller.startNative(ctx, question, context);
+        handle = controller.start(ctx, question, context);
       } catch (e) {
         ctx.ui.notify(`RLM failed to start: ${e instanceof Error ? e.message : e}`, "error");
         return;
       }
 
+      const { tree, done } = handle;
+      ctx.ui.setWidget("rlm-tree", createTreeWidget(tree), { placement: "aboveEditor" });
+
       const statusTimer = setInterval(() => {
-        const run = controller.current();
-        if (!run) {
+        if (controller.isBusy()) {
+          const t = tree.totals();
+          ctx.ui.setStatus(
+            "rlm",
+            `● RLM · ${formatCost(t.costUsd)} · ${formatTokens(t.tokens)} tok · ${t.running} active`,
+          );
+        } else {
           clearInterval(statusTimer);
-          clearRlmStatus(ctx.ui);
-          return;
         }
-        const u = run.usage;
-        ctx.ui.setStatus(
-          "rlm",
-          `● RLM turn ${run.turns} · ${formatCost(u.costUsd)} · ${formatTokens(u.inputTokens + u.outputTokens)} tok · ${u.subCalls} sub-calls`,
-        );
       }, 300);
 
-      pi.sendUserMessage(question);
+      try {
+        const result = await done;
+        pi.sendMessage({
+          customType: "rlm-answer",
+          content: result.answer,
+          display: true,
+          details: { iterations: result.iterations, costUsd: result.costUsd },
+        });
+      } catch (e) {
+        ctx.ui.notify(`RLM failed: ${e instanceof Error ? e.message : e}`, "error");
+      } finally {
+        clearInterval(statusTimer);
+        ctx.ui.setWidget("rlm-tree", undefined);
+        clearRlmStatus(ctx.ui);
+      }
     },
   });
 

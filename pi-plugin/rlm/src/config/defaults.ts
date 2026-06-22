@@ -7,6 +7,7 @@ export const DEFAULT_CONFIG: RlmConfig = {
   requestTimeoutMs: 10 * 60_000,
   maxConcurrentSubcalls: 4,
   maxPromptChars: 400_000,
+  maxErrors: 5,
   orchestrator: true,
   compaction: false,
   compactionThresholdPct: 0.85,

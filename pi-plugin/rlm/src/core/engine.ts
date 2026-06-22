@@ -13,7 +13,7 @@ import { createLlmBridge } from "../bridge/llm-query.ts";
 import { type ChatMsg, modelComplete } from "../bridge/model.ts";
 import { createRlmHandlers } from "../bridge/rlm-query.ts";
 import { resolveModelId } from "../config/settings.ts";
-import { buildMetadataLine, buildRlmSystemPrompt } from "../prompts/system.ts";
+import { buildRlmSystemPrompt } from "../prompts/system.ts";
 import { buildTurnPrompt, FINALIZE_PROMPT } from "../prompts/user.ts";
 import { NOOP_OBSERVER, type SubcallObserver } from "../state/events.ts";
 import { PythonSandbox } from "../sandbox/sandbox.ts";
@@ -50,12 +50,29 @@ export function createEngine(deps: EngineDeps): RunRlm {
       detail: input.rootPrompt ? input.rootPrompt.slice(0, 60) : String(input.context).slice(0, 60),
     });
 
-    const smartModel = input.smartModelOverride
-      ? resolveModelId(deps.registry, input.smartModelOverride) ?? deps.smartModel
-      : deps.smartModel;
+    const overrideModel = input.smartModelOverride ? resolveModelId(deps.registry, input.smartModelOverride) : undefined;
+    if (input.smartModelOverride && !overrideModel) {
+      observer.end(selfId, { error: "unknown model override" });
+      return {
+        answer: `Error: unknown model override '${input.smartModelOverride}'`,
+        iterations: 0,
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: 0,
+      };
+    }
+    const smartModel = overrideModel ?? deps.smartModel;
 
     // Create LimitGuard BEFORE the bridge so sub-LLM usage feeds into it.
-    const limits = new LimitGuard(deps.limits);
+    // Children inherit the parent's remaining budget/timeout (reference: limits propagate
+    // as remaining amounts, not the full original cap).
+    const limits = new LimitGuard({
+      maxBudgetUsd: input.remainingBudgetUsd ?? deps.limits?.maxBudgetUsd,
+      maxTimeoutMs: input.remainingTimeoutMs ?? deps.limits?.maxTimeoutMs,
+      maxErrors: deps.limits?.maxErrors,
+      maxTokens: deps.limits?.maxTokens,
+    });
 
     const llm = createLlmBridge({
       workerModel: deps.workerModel,
@@ -78,6 +95,13 @@ export function createEngine(deps: EngineDeps): RunRlm {
       maxDepth: deps.config.maxDepth,
       maxConcurrent: deps.config.maxConcurrentSubcalls,
       parentNodeId: selfId,
+      remainingBudget: () => ({
+        budgetUsd: limits.remainingBudgetUsd(),
+        timeoutMs: limits.remainingTimeoutMs(),
+      }),
+      onChildUsage: (costUsd, inputTokens, outputTokens) => {
+        limits.addRaw(costUsd, inputTokens, outputTokens);
+      },
     });
 
     const sandbox = await PythonSandbox.spawn({
@@ -102,6 +126,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
 
     let best = "";
     let compactions = 0;
+    let completedTurns = 0;
     let nodeStatus: "done" | "error" = "done";
     try {
       await sandbox.loadContext(input.context);
@@ -110,8 +135,16 @@ export function createEngine(deps: EngineDeps): RunRlm {
         observer.detail(selfId, `turn ${i + 1}/${deps.config.maxIterations}`);
 
         if (deps.config.compaction) {
-          const cd = { model: smartModel, registry: deps.registry, contextWindow: smartModel.contextWindow, thresholdPct: deps.config.compactionThresholdPct, signal: deps.signal };
-          if (shouldCompact(history, cd)) history = await compactHistory(history, cd, ++compactions, (u) => limits.addUsage(u));
+          const compactionDeps = {
+            model: smartModel,
+            registry: deps.registry,
+            contextWindow: smartModel.contextWindow,
+            thresholdPct: deps.config.compactionThresholdPct,
+            signal: deps.signal,
+          };
+          if (shouldCompact(history, compactionDeps)) {
+            history = await compactHistory(history, compactionDeps, ++compactions, (u) => limits.addUsage(u));
+          }
         }
 
         history.push({ role: "user", content: buildTurnPrompt(i, deps.config.maxIterations) });
@@ -125,6 +158,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
         observer.usage(selfId, turn.usage.cost.total, turn.usage.totalTokens);
         deps.onUsage?.(turn.usage, "root");
         if (turn.response.trim()) best = turn.response;
+        completedTurns = i + 1;
 
         const final = finalAnswerOf(turn.results);
         if (final != null) return result(final, i + 1, limits);
@@ -135,9 +169,13 @@ export function createEngine(deps: EngineDeps): RunRlm {
       }
       return result(await finalize(history, deps, limits), deps.config.maxIterations, limits);
     } catch (err) {
+      // Abort is a user action — resolve with the best partial, not an error.
+      if (deps.signal?.aborted) {
+        return result(best.trim() || "(aborted)", completedTurns, limits);
+      }
       if (err instanceof LimitError) {
         nodeStatus = "error";
-        return result(best.trim() || `(stopped: ${err.message})`, 0, limits);
+        return result(best.trim() || `(stopped: ${err.message})`, completedTurns, limits);
       }
       nodeStatus = "error";
       throw err;

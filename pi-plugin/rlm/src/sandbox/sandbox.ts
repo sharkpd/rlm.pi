@@ -2,12 +2,14 @@
  * PythonSandbox — owns one `python3 worker.py` subprocess and the JSONL stdio pump.
  *
  * The pump multiplexes two concerns on one pipe:
- *   1. request/response (exec, load_context, bootstrap, shutdown), keyed by `id`;
+ *   1. request/response (exec, load_context, shutdown), keyed by `id`;
  *   2. mid-exec sub-LLM interrupts (llm_query/rlm_query), serviced in-process by handlers
  *      the engine/bridge installs — the worker never sees API keys.
  */
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -75,6 +77,7 @@ interface Pending {
 export class PythonSandbox {
   private proc: ChildProcessWithoutNullStreams;
   private buf = "";
+  private scanOffset = 0;
   private seq = 0;
   private readonly pending = new Map<string, Pending>();
   private readonly handlers: SubLlmHandlers;
@@ -83,7 +86,7 @@ export class PythonSandbox {
   private disposed = false;
   private ready: Promise<void>;
 
-  private constructor(private readonly opts: SandboxOptions) {
+  private constructor(opts: SandboxOptions) {
     this.handlers = { ...REJECT, ...opts.handlers };
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 20 * 60_000;
     const python = opts.python ?? "python3";
@@ -132,17 +135,30 @@ export class PythonSandbox {
     return sandbox;
   }
 
-  setHandlers(handlers: Partial<SubLlmHandlers>): void {
-    Object.assign(this.handlers, handlers);
-  }
-
   async loadContext(payload: unknown, index?: number): Promise<number> {
-    const res = await this.request({ type: "load_context", payload, index });
-    return res.index ?? 0;
+    const isJson = typeof payload !== "string";
+    let path: string | undefined;
+    try {
+      path = await this.writeContextFile(payload, isJson);
+      const res = await this.request({ type: "load_context", path, index, json: isJson });
+      return res.index ?? 0;
+    } finally {
+      if (path) await unlink(path).catch(() => {});
+    }
   }
 
-  async bootstrap(code: string): Promise<void> {
-    if (code.trim()) await this.request({ type: "bootstrap", code });
+  private async writeContextFile(payload: unknown, isJson: boolean): Promise<string> {
+    const file = join(
+      tmpdir(),
+      `rlm-ctx-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${isJson ? "json" : "txt"}`,
+    );
+    try {
+      await writeFile(file, isJson ? JSON.stringify(payload) : (payload as string));
+    } catch (e) {
+      await unlink(file).catch(() => {});
+      throw e;
+    }
+    return file;
   }
 
   async exec(code: string): Promise<ReplResult> {
@@ -206,10 +222,23 @@ export class PythonSandbox {
   private onData(chunk: string): void {
     this.buf += chunk;
     let nl: number;
-    while ((nl = this.buf.indexOf("\n")) >= 0) {
-      const line = this.buf.slice(0, nl).trim();
-      this.buf = this.buf.slice(nl + 1);
-      if (line) this.dispatch(JSON.parse(line) as WorkerMessage);
+    while ((nl = this.buf.indexOf("\n", this.scanOffset)) >= 0) {
+      const line = this.buf.slice(this.scanOffset, nl).trim();
+      this.scanOffset = nl + 1;
+      if (line) {
+        try {
+          this.dispatch(JSON.parse(line) as WorkerMessage);
+        } catch {
+          // Non-JSON line on the protocol stream — likely a subprocess writing to fd 1.
+          // Skip it so a rogue write doesn't kill the pump, but retain a breadcrumb for watchdog errors.
+          this.stderr = `${this.stderr}\n[protocol] skipped non-JSON stdout line: ${line.slice(0, 200)}`.slice(-8192);
+        }
+      }
+    }
+    // Drop the processed prefix to avoid O(n²) growth across chunks.
+    if (this.scanOffset > 0) {
+      this.buf = this.buf.slice(this.scanOffset);
+      this.scanOffset = 0;
     }
   }
 

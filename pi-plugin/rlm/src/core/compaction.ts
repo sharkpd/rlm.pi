@@ -26,6 +26,7 @@ export interface CompactionDeps {
 
 /** True if the history is at/over the compaction threshold. */
 export function shouldCompact(history: ChatMsg[], deps: CompactionDeps): boolean {
+  if (!deps.contextWindow || deps.contextWindow <= 0) return false;
   const threshold = (deps.thresholdPct ?? 0.85) * deps.contextWindow;
   return estimateMessageTokens(history) >= threshold;
 }

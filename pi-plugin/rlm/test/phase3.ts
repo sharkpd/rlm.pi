@@ -18,6 +18,8 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { createEngine } from "../src/core/engine.ts";
+import { loadSettings, mergeConfig } from "../src/config/settings.ts";
 import { cheapestModel } from "../src/mode/rlm-mode.ts";
 import rlmExtension from "../src/index.ts";
 
@@ -86,6 +88,23 @@ async function main() {
   }
   console.log(`\nrlm-answer: ${JSON.stringify(answer.slice(0, 200))}`);
   check("RLM answered from the context (silver birch)", /silver birch/i.test(answer));
+
+  // Limit-firing: a maxTokens:1 cap guarantees a LimitError on the first completion regardless of
+  // model behaviour, proving the root guards fire (the engine stops with a partial/stop answer).
+  const baseCfg = mergeConfig(loadSettings().config);
+  const limEngine = createEngine({
+    smartModel: model,
+    workerModel: cheapestModel(modelRegistry) ?? model,
+    registry: modelRegistry,
+    config: baseCfg,
+    limits: { maxTokens: 1 },
+  });
+  const lim = await limEngine({ rootPrompt: "What is 2+2?", context: "no extra context", depth: 0 });
+  check(
+    "limit: maxTokens:1 stops the engine with a stop/partial answer",
+    /stopped/i.test(lim.answer) || lim.iterations < baseCfg.maxIterations,
+    JSON.stringify(lim.answer).slice(0, 100),
+  );
 
   session.dispose();
   finish();

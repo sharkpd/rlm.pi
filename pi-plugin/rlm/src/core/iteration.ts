@@ -1,7 +1,7 @@
 /**
  * A single RLM turn for the headless engine: ask the root model, parse its ```repl``` blocks,
- * execute each in the sandbox, and return the results. (Native mode does this via pi's loop +
- * the rlm_repl tool instead.)
+ * execute each in the sandbox, and return the results. (The engine drives this; pi's loop is
+ * not involved.)
  */
 
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";

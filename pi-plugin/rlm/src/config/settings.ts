@@ -37,6 +37,10 @@ function validateConfig(raw: unknown): Partial<RlmConfig> {
   if (validateNumber(r.requestTimeoutMs, 1000)) out.requestTimeoutMs = r.requestTimeoutMs as number;
   if (validateNumber(r.maxConcurrentSubcalls, 1)) out.maxConcurrentSubcalls = r.maxConcurrentSubcalls as number;
   if (validateNumber(r.maxPromptChars, 1000)) out.maxPromptChars = r.maxPromptChars as number;
+  if (validateNumber(r.maxBudgetUsd, 0.01)) out.maxBudgetUsd = r.maxBudgetUsd as number;
+  if (validateNumber(r.maxTimeoutMs, 1000)) out.maxTimeoutMs = r.maxTimeoutMs as number;
+  if (validateNumber(r.maxTokens, 1)) out.maxTokens = r.maxTokens as number;
+  if (validateNumber(r.maxErrors, 1)) out.maxErrors = r.maxErrors as number;
   if (typeof r.orchestrator === "boolean") out.orchestrator = r.orchestrator;
   if (typeof r.compaction === "boolean") out.compaction = r.compaction;
   if (validateNumber(r.compactionThresholdPct, 0) && (r.compactionThresholdPct as number) <= 1) out.compactionThresholdPct = r.compactionThresholdPct as number;

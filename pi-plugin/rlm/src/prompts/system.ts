@@ -1,12 +1,9 @@
 /**
  * RLM system prompt (ported from rlm/utils/prompts.py).
  *
- * The root model runs Python by writing fenced ```repl``` blocks (headless engine) or by calling
- * the `rlm_repl` tool (native Pi mode). The REPL exposes `context`, the sub-LLM functions, and
- * the `answer` dict the model flips to submit.
+ * The root model runs Python by writing fenced ```repl``` blocks (headless engine). The REPL
+ * exposes `context`, the sub-LLM functions, and the `answer` dict the model flips to submit.
  */
-
-export type CodeTransport = "tool" | "fenced";
 
 export interface PromptMeta {
   contextType: string;
@@ -15,19 +12,11 @@ export interface PromptMeta {
 }
 
 export interface SystemPromptOptions {
-  transport?: CodeTransport;
   orchestrator?: boolean;
   recursion?: boolean;
 }
 
-function howToRunCode(t: CodeTransport): string {
-  if (t === "tool") {
-    return [
-      "To run Python, call the `rlm_repl` tool with a `code` string. The REPL **persists** across",
-      "calls: variables you define stay defined. Only `print(...)` output (stdout) is returned to you;",
-      "a bare expression on the last line is discarded, so always wrap inspections in `print(...)`.",
-    ].join(" ");
-  }
+function howToRunCode(): string {
   return [
     "To run Python, write a fenced ```repl``` block. The REPL **persists** across turns. Only",
     "`print(...)` output (stdout) is returned; a bare expression on the last line is discarded, so",
@@ -89,7 +78,7 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
   const parts = [
     INTRO,
     "",
-    howToRunCode(opts.transport ?? "fenced"),
+    howToRunCode(),
     "",
     replGlossary(recursion),
     "",

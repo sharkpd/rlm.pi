@@ -2,15 +2,14 @@
  * Wire protocol for the RLM Python sandbox.
  *
  * Newline-delimited JSON over the worker's stdin/stdout — no sockets, no HTTP.
- * Parent -> worker: requests (exec/load_context/bootstrap/shutdown) and llm replies.
+ * Parent -> worker: requests (exec/load_context/shutdown) and llm replies.
  * Worker -> parent: request responses and mid-exec sub-LLM interrupts.
  */
 
 /** Requests the parent sends to the worker. */
 export type WorkerRequest =
   | { id: string; type: "exec"; code: string }
-  | { id: string; type: "load_context"; payload: unknown; index?: number }
-  | { id: string; type: "bootstrap"; code: string }
+  | { id: string; type: "load_context"; path: string; index?: number; json: boolean }
   | { id: string; type: "shutdown" };
 
 /** Reply the parent sends to satisfy a sub-LLM interrupt. */

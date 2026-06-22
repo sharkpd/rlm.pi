@@ -8,6 +8,7 @@
 
 import type { RunRlm } from "../core/types.ts";
 import type { LlmBridge } from "./llm-query.ts";
+import { mapPool } from "../util/concurrency.ts";
 
 export interface RlmHandlers {
   rlmQuery(prompt: string, model: string | null, depth: number): Promise<string>;
@@ -21,20 +22,10 @@ export interface RlmBridgeOptions {
   maxConcurrent: number;
   /** AgentTree node of the current run; recursive children attach under it. */
   parentNodeId?: string;
-}
-
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (true) {
-      const i = next++;
-      if (i >= items.length) return;
-      out[i] = await fn(items[i]!, i);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
-  return out;
+  /** Returns the parent's remaining budget/timeout for seeding child runs. */
+  remainingBudget?: () => { budgetUsd?: number; timeoutMs?: number };
+  /** Called with a child run's total cost/tokens so the parent LimitGuard debits it. */
+  onChildUsage?: (costUsd: number, inputTokens: number, outputTokens: number) => void;
 }
 
 export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
@@ -43,13 +34,21 @@ export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
     // At the cap, a child RLM would just be an LM — short-circuit to a one-shot llm_query.
     if (childDepth >= opts.maxDepth) return opts.llm.llmQuery(prompt, model, depth);
     try {
+      const rem = opts.remainingBudget?.() ?? {};
+      // Pre-spawn guard: refuse if the parent's budget or timeout is already exhausted
+      // (reference: _subcall checks remaining_budget/timeout before spawning).
+      if (rem.budgetUsd !== undefined && rem.budgetUsd <= 0) return "Error: budget exhausted";
+      if (rem.timeoutMs !== undefined && rem.timeoutMs <= 0) return "Error: timeout exhausted";
       const res = await opts.run({
         rootPrompt: "",
         context: prompt,
         depth: childDepth,
         parentNodeId: opts.parentNodeId,
         smartModelOverride: model ?? undefined,
+        remainingBudgetUsd: rem.budgetUsd,
+        remainingTimeoutMs: rem.timeoutMs,
       });
+      opts.onChildUsage?.(res.costUsd, res.inputTokens, res.outputTokens);
       return res.answer;
     } catch (err) {
       return `Error: child RLM failed - ${err instanceof Error ? err.message : String(err)}`;

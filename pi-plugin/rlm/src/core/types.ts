@@ -1,4 +1,4 @@
-/** Shared configuration + runtime types for the RLM engine and native mode. */
+/** Shared configuration + runtime types for the RLM engine. */
 
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 
@@ -11,7 +11,7 @@ export interface Sampling {
 export interface RlmConfig {
   /** Max recursion depth. depth >= maxDepth ⇒ rlm_query falls back to a plain llm_query. */
   maxDepth: number;
-  /** Max turns before the engine/native loop must finalize. */
+  /** Max turns before the engine must finalize. */
   maxIterations: number;
   /** Per-`repl`-block wall-clock timeout inside the worker (seconds). */
   execTimeoutS: number;
@@ -21,6 +21,14 @@ export interface RlmConfig {
   maxConcurrentSubcalls: number;
   /** Reject sub-LLM prompts larger than this many chars. */
   maxPromptChars: number;
+  /** Max USD spend across the whole tree before the engine stops (undefined = no cap). */
+  maxBudgetUsd?: number;
+  /** Max wall-clock ms across the whole tree before the engine stops (undefined = no cap). */
+  maxTimeoutMs?: number;
+  /** Max total input+output tokens across the whole tree before the engine stops (undefined = no cap). */
+  maxTokens?: number;
+  /** Max consecutive error turns before the engine stops (undefined = no cap). */
+  maxErrors?: number;
   /** Append the orchestrator addendum to the system prompt. */
   orchestrator: boolean;
   /** Summarize the trajectory when it grows past the threshold (keeps the root window small). */
@@ -45,9 +53,13 @@ export interface RlmInput {
   parentNodeId?: string;
   /** "provider/id" — overrides deps.smartModel for this run (set by recursive rlm_query). */
   smartModelOverride?: string;
+  /** Remaining budget for this subtree (set by parent from its LimitGuard). */
+  remainingBudgetUsd?: number;
+  /** Remaining timeout for this subtree (set by parent from its LimitGuard). */
+  remainingTimeoutMs?: number;
 }
 
-/** Result of a completed RLM run (headless or native). */
+/** Result of a completed RLM run. */
 export interface RlmResult {
   answer: string;
   iterations: number;

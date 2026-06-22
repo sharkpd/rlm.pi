@@ -1,10 +1,10 @@
 """RLM sandbox worker: a persistent Python REPL driven over a JSONL stdio protocol.
 
-Executes model-authored Python with secrets stripped from the environment. This is NOT a
-security sandbox: __import__ and open are available, so code can import networking modules
+Executes model-authored Python with secrets stripped from the environment.
+This is NOT a security sandbox: __import__ and open are available, so code can import networking modules
 (socket, urllib, subprocess) and read/write local files. Trust the root model's code.
 
-Protocol (parent -> worker):  {"id","type":"exec"|"load_context"|"bootstrap"|"shutdown", ...}
+Protocol (parent -> worker):  {"id","type":"exec"|"load_context"|"shutdown", ...}
 Protocol (worker -> parent):  {"id","ok",...result}            # response to a request
                               {"type":"llm_query"|"llm_query_batched"|"rlm_query","rid",...}
                                                                 # mid-exec sub-LLM request
@@ -59,7 +59,7 @@ for _blocked in ("eval", "exec", "compile", "input", "globals", "locals"):
     _SAFE_BUILTINS[_blocked] = None
 
 RESERVED = frozenset(
-    {"llm_query", "llm_query_batched", "rlm_query", "rlm_query_batched", "SHOW_VARS", "answer", "context"}
+    {"llm_query", "llm_query_batched", "rlm_query", "rlm_query_batched", "SHOW_VARS", "answer", "context", "context_0"}
 )
 
 
@@ -124,12 +124,15 @@ class Worker:
                 if cur.get("ready") and self._final_answer is None:
                     self._final_answer = str(cur.get("content", ""))
             self.locals["answer"] = ans
+        # Restore the context alias (reference: context = context_0 every cell).
+        if "context_0" in self.locals:
+            self.locals["context"] = self.locals["context_0"]
 
     def _show_vars(self) -> str:
         avail = {
             k: type(v).__name__
             for k, v in self.locals.items()
-            if not k.startswith("_") and k != "answer"
+            if not k.startswith("_") and k not in RESERVED
         }
         return f"Available variables: {avail}" if avail else "No variables created yet."
 
@@ -139,15 +142,25 @@ class Worker:
         self._rid += 1
         rid = f"q{self._rid}"
         _send({"type": kind, "rid": rid, "depth": self.depth, **payload})
-        while True:
-            line = _REAL_STDIN.readline()
-            if not line:
-                raise RuntimeError("parent closed the pipe during a sub-LLM request")
-            msg = json.loads(line)
-            if msg.get("type") == "llm_reply" and msg.get("rid") == rid:
-                return msg
-            # The parent only ever sends our reply mid-exec; anything else is a protocol error.
-            raise RuntimeError(f"unexpected parent message during sub-LLM request: {msg!r}")
+        # The per-cell SIGALRM is wall-clock; it must not count time blocked here waiting for
+        # a sub-LLM reply (network/LLM latency, not local CPU). Pause it across the readline.
+        pause = self.exec_timeout_s > 0 and hasattr(signal, "SIGALRM")
+        if pause:
+            remaining = signal.getitimer(signal.ITIMER_REAL)[0]
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        try:
+            while True:
+                line = _REAL_STDIN.readline()
+                if not line:
+                    raise RuntimeError("parent closed the pipe during a sub-LLM request")
+                msg = json.loads(line)
+                if msg.get("type") == "llm_reply" and msg.get("rid") == rid:
+                    return msg
+                # The parent only ever sends our reply mid-exec; anything else is a protocol error.
+                raise RuntimeError(f"unexpected parent message during sub-LLM request: {msg!r}")
+        finally:
+            if pause and remaining > 0:
+                signal.setitimer(signal.ITIMER_REAL, remaining)
 
     def _llm_query(self, prompt: str, model: str | None = None) -> str:
         r = self._rpc("llm_query", {"prompt": str(prompt), "model": model})
@@ -183,9 +196,11 @@ class Worker:
 
     # ---- context + execution --------------------------------------------------------------
 
-    def load_context(self, payload: Any, index: int | None = None) -> int:
+    def load_context(self, path: str, index: int | None = None, is_json: bool = False) -> int:
         if index is None:
             index = self._context_count
+        with open(path, "r") as f:
+            payload = json.load(f) if is_json else f.read()
         self.locals[f"context_{index}"] = payload
         if index == 0:
             self.locals["context"] = payload
@@ -226,7 +241,7 @@ class Worker:
                 ns = {**self.globals, **self.locals}
                 self._exec(code, ns)
                 for k, v in ns.items():
-                    if k not in self.globals and not k.startswith("__"):
+                    if k not in self.globals and not k.startswith("_"):
                         self.locals[k] = v
                 self._restore_scaffold()
                 stdout, stderr = out.getvalue(), err.getvalue()
@@ -270,13 +285,8 @@ def main() -> None:
             if kind == "exec":
                 _send({"id": rid, "ok": True, **worker.execute(req.get("code", ""))})
             elif kind == "load_context":
-                idx = worker.load_context(req.get("payload"), req.get("index"))
+                idx = worker.load_context(req.get("path"), req.get("index"), req.get("json"))
                 _send({"id": rid, "ok": True, "index": idx})
-            elif kind == "bootstrap":
-                code = req.get("code") or ""
-                if code:
-                    exec(compile(code, "<bootstrap>", "exec"), worker.globals)  # noqa: S102
-                _send({"id": rid, "ok": True})
             elif kind == "shutdown":
                 _send({"id": rid, "ok": True})
                 return

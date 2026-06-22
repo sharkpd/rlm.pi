@@ -8,11 +8,6 @@
 
 const CHARS_PER_TOKEN = 4;
 
-/** Rough token count for a string. */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
-}
-
 /** Rough token count for a list of role/content messages. */
 export function estimateMessageTokens(messages: { content: string }[]): number {
   let chars = 0;

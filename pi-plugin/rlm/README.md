@@ -50,10 +50,17 @@ with status, model, cost, tokens, and duration. The final answer is posted to th
 | Worker model | cheapest available | answers `llm_query` |
 | Max recursion depth | 2 | `rlm_query` past this falls back to `llm_query` |
 | Max iterations | 30 | turns before the engine finalizes |
+| Budget ceiling | none | stops the whole tree when USD spend exceeds this |
+| Max consecutive errors | 5 | stops after N consecutive error turns |
 | REPL block timeout | 120s | per-`repl`-block wall-clock (SIGALRM in the worker) |
 | Max concurrent sub-calls | 4 | pool size for `*_batched` |
 | Orchestrator addendum | on | "delegate, don't solve" guidance |
 | Trajectory compaction | off | summarize history when it nears the context window |
+
+> **Concurrency note:** each `rlm_query` child spawns its own `python3` worker (~50–150 ms
+> cold start). Worst-case concurrent interpreters ≈ `maxConcurrentSubcalls`^(depth−1); at
+> defaults (depth 2, conc 4) that's 4, but raising both via `/rlm-config` can fork many. Budget
+> and error caps (above) bound total spend regardless of fan-out.
 
 ## Security
 
@@ -78,7 +85,7 @@ src/
   bridge/    model.ts (one-shot completion) · llm-query.ts · rlm-query.ts (recursion)
   core/      engine.ts (the loop) · iteration · limits · answer · compaction · types
   prompts/   system + per-turn prompts (ported from the Python reference)
-  text/      parsing (repl blocks) · tokens · chunking (FFD bin packing)
+  text/      parsing (repl blocks) · tokens
   state/     agent-tree · events (SubcallObserver)
   ui/        tree-widget · status · model-picker · config-panel · theme
   commands/  rlm · rlm-config

@@ -47,6 +47,13 @@ export class LimitGuard {
     this.costUsd += usage.cost.total;
   }
 
+  /** Fold a recursive child run's total cost/tokens into this guard. */
+  addRaw(costUsd: number, inputTokens: number, outputTokens: number): void {
+    this.costUsd += costUsd;
+    this.inputTokens += inputTokens;
+    this.outputTokens += outputTokens;
+  }
+
   /** Call after each turn with whether the turn's REPL produced an error. */
   observe(hadError: boolean): void {
     this.consecutiveErrors = hadError ? this.consecutiveErrors + 1 : 0;
