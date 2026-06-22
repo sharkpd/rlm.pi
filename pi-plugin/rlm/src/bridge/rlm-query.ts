@@ -43,7 +43,13 @@ export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
     // At the cap, a child RLM would just be an LM — short-circuit to a one-shot llm_query.
     if (childDepth >= opts.maxDepth) return opts.llm.llmQuery(prompt, model, depth);
     try {
-      const res = await opts.run({ rootPrompt: "", context: prompt, depth: childDepth, parentNodeId: opts.parentNodeId });
+      const res = await opts.run({
+        rootPrompt: "",
+        context: prompt,
+        depth: childDepth,
+        parentNodeId: opts.parentNodeId,
+        smartModelOverride: model ?? undefined,
+      });
       return res.answer;
     } catch (err) {
       return `Error: child RLM failed - ${err instanceof Error ? err.message : String(err)}`;

@@ -12,6 +12,7 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { createLlmBridge } from "../bridge/llm-query.ts";
 import { type ChatMsg, modelComplete } from "../bridge/model.ts";
 import { createRlmHandlers } from "../bridge/rlm-query.ts";
+import { resolveModelId } from "../config/settings.ts";
 import { buildMetadataLine, buildRlmSystemPrompt } from "../prompts/system.ts";
 import { buildTurnPrompt, FINALIZE_PROMPT } from "../prompts/user.ts";
 import { NOOP_OBSERVER, type SubcallObserver } from "../state/events.ts";
@@ -40,7 +41,6 @@ export interface EngineDeps {
 export function createEngine(deps: EngineDeps): RunRlm {
   const observer = deps.observer ?? NOOP_OBSERVER;
   const run: RunRlm = async (input: RlmInput): Promise<RlmResult> => {
-    // One tree node per run: the orchestrator at depth 0, an `rlm` child when recursing.
     const selfId = observer.start({
       kind: input.depth === 0 ? "root" : "rlm",
       depth: input.depth,
@@ -50,6 +50,13 @@ export function createEngine(deps: EngineDeps): RunRlm {
       detail: input.rootPrompt ? input.rootPrompt.slice(0, 60) : String(input.context).slice(0, 60),
     });
 
+    const smartModel = input.smartModelOverride
+      ? resolveModelId(deps.registry, input.smartModelOverride) ?? deps.smartModel
+      : deps.smartModel;
+
+    // Create LimitGuard BEFORE the bridge so sub-LLM usage feeds into it.
+    const limits = new LimitGuard(deps.limits);
+
     const llm = createLlmBridge({
       workerModel: deps.workerModel,
       registry: deps.registry,
@@ -57,7 +64,10 @@ export function createEngine(deps: EngineDeps): RunRlm {
       maxConcurrent: deps.config.maxConcurrentSubcalls,
       sampling: deps.config.subSampling,
       signal: deps.signal,
-      onUsage: (u) => deps.onUsage?.(u, "sub"),
+      onUsage: (u) => {
+        limits.addUsage(u);
+        deps.onUsage?.(u, "sub");
+      },
       observer,
       parentId: selfId,
       depth: input.depth,
@@ -75,10 +85,10 @@ export function createEngine(deps: EngineDeps): RunRlm {
       execTimeoutS: deps.config.execTimeoutS,
       requestTimeoutMs: deps.config.requestTimeoutMs,
       python: deps.config.python,
+      signal: deps.signal,
       handlers: { ...llm, ...rlm },
     });
 
-    const limits = new LimitGuard(deps.limits);
     const meta = {
       contextType: contextTypeLabel(input.context),
       contextChars: contextLength(input.context),
@@ -100,14 +110,14 @@ export function createEngine(deps: EngineDeps): RunRlm {
         observer.detail(selfId, `turn ${i + 1}/${deps.config.maxIterations}`);
 
         if (deps.config.compaction) {
-          const cd = { model: deps.smartModel, registry: deps.registry, contextWindow: deps.smartModel.contextWindow, thresholdPct: deps.config.compactionThresholdPct, signal: deps.signal };
-          if (shouldCompact(history, cd)) history = await compactHistory(history, cd, ++compactions);
+          const cd = { model: smartModel, registry: deps.registry, contextWindow: smartModel.contextWindow, thresholdPct: deps.config.compactionThresholdPct, signal: deps.signal };
+          if (shouldCompact(history, cd)) history = await compactHistory(history, cd, ++compactions, (u) => limits.addUsage(u));
         }
 
         history.push({ role: "user", content: buildTurnPrompt(i, deps.config.maxIterations) });
 
         const turn = await runTurn(history, sandbox, {
-          model: deps.smartModel,
+          model: smartModel,
           registry: deps.registry,
           signal: deps.signal,
         });
@@ -123,7 +133,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
         history.push({ role: "assistant", content: turn.response });
         history.push({ role: "user", content: formatReplOutputs(turn.results) });
       }
-      return result(await finalize(history, deps), deps.config.maxIterations, limits);
+      return result(await finalize(history, deps, limits), deps.config.maxIterations, limits);
     } catch (err) {
       if (err instanceof LimitError) {
         nodeStatus = "error";
@@ -145,11 +155,12 @@ function result(answer: string, iterations: number, limits: LimitGuard): RlmResu
 }
 
 /** Out of turns: ask the model for its best final answer (plain text). */
-async function finalize(history: ChatMsg[], deps: EngineDeps): Promise<string> {
-  const { text } = await modelComplete([...history, { role: "user", content: FINALIZE_PROMPT }], {
+async function finalize(history: ChatMsg[], deps: EngineDeps, limits: LimitGuard): Promise<string> {
+  const { text, usage } = await modelComplete([...history, { role: "user", content: FINALIZE_PROMPT }], {
     model: deps.smartModel,
     registry: deps.registry,
     signal: deps.signal,
   });
+  limits.addUsage(usage);
   return text.trim();
 }

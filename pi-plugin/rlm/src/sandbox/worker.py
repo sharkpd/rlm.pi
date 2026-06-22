@@ -1,7 +1,8 @@
 """RLM sandbox worker: a persistent Python REPL driven over a JSONL stdio protocol.
 
-The parent (TypeScript) and this worker speak newline-delimited JSON over stdin/stdout.
-No sockets, no HTTP, no network — the only channel is this pipe.
+Executes model-authored Python with secrets stripped from the environment. This is NOT a
+security sandbox: __import__ and open are available, so code can import networking modules
+(socket, urllib, subprocess) and read/write local files. Trust the root model's code.
 
 Protocol (parent -> worker):  {"id","type":"exec"|"load_context"|"bootstrap"|"shutdown", ...}
 Protocol (worker -> parent):  {"id","ok",...result}            # response to a request

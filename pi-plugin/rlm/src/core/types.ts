@@ -43,6 +43,8 @@ export interface RlmInput {
   depth: number;
   /** AgentTree node to attach this run's node under (set when recursing). */
   parentNodeId?: string;
+  /** "provider/id" — overrides deps.smartModel for this run (set by recursive rlm_query). */
+  smartModelOverride?: string;
 }
 
 /** Result of a completed RLM run (headless or native). */

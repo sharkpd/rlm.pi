@@ -15,6 +15,7 @@ import { registerRlmCommand } from "./commands/rlm.ts";
 import { registerRlmConfigCommand } from "./commands/rlm-config.ts";
 import { loadSettings, mergeConfig } from "./config/settings.ts";
 import { RlmController } from "./mode/rlm-mode.ts";
+import { createReplTool } from "./tools/repl-tool.ts";
 
 export default function rlmExtension(pi: ExtensionAPI): void {
   const persisted = loadSettings();
@@ -30,8 +31,29 @@ export default function rlmExtension(pi: ExtensionAPI): void {
 
   registerRlmCommand(pi, controller);
   registerRlmConfigCommand(pi, controller);
+  pi.registerTool(createReplTool(controller));
+
+  let savedTools: string[] | null = null;
+
+  pi.on("before_agent_start", async () => {
+    if (!controller.current()) return;
+    if (savedTools === null) savedTools = pi.getActiveTools().filter((t) => t !== "rlm_repl");
+    pi.setActiveTools(["rlm_repl"]);
+    return { systemPrompt: controller.systemPrompt() };
+  });
+
+  pi.on("agent_end", async () => {
+    if (controller.current() || savedTools) {
+      await controller.finishNative();
+      if (savedTools) {
+        pi.setActiveTools(savedTools);
+        savedTools = null;
+      }
+    }
+  });
 
   pi.on("session_shutdown", async () => {
     controller.abort();
+    await controller.finishNative();
   });
 }

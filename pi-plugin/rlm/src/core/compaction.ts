@@ -6,7 +6,7 @@
  * idea from DP sequence alignment). Keeps the system message + a fresh "continue" instruction.
  */
 
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { type ChatMsg, modelComplete } from "../bridge/model.ts";
 import { estimateMessageTokens } from "../text/tokens.ts";
@@ -34,12 +34,18 @@ export function shouldCompact(history: ChatMsg[], deps: CompactionDeps): boolean
  * Summarize the trajectory and return a compacted history: [system, summary(assistant),
  * continue(user)]. The caller continues appending turns from there.
  */
-export async function compactHistory(history: ChatMsg[], deps: CompactionDeps, count = 1): Promise<ChatMsg[]> {
-  const { text: summary } = await modelComplete([...history, { role: "user", content: SUMMARY_REQUEST }], {
+export async function compactHistory(
+  history: ChatMsg[],
+  deps: CompactionDeps,
+  count = 1,
+  onUsage?: (u: Usage) => void,
+): Promise<ChatMsg[]> {
+  const { text: summary, usage } = await modelComplete([...history, { role: "user", content: SUMMARY_REQUEST }], {
     model: deps.model,
     registry: deps.registry,
     signal: deps.signal,
   });
+  onUsage?.(usage);
   const system = history.find((m) => m.role === "system");
   const head: ChatMsg[] = system ? [system] : [];
   return [

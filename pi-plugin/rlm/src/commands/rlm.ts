@@ -10,12 +10,12 @@
  * `/rlm-stop` aborts an in-flight run.
  */
 
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, stat as fsStat } from "node:fs/promises";
+import { relative, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { RlmController } from "../mode/rlm-mode.ts";
-import { clearRlmStatus, setRlmStatus } from "../ui/status.ts";
-import { createTreeWidget } from "../ui/tree-widget.ts";
+import { clearRlmStatus } from "../ui/status.ts";
+import { formatCost, formatTokens } from "../ui/theme.ts";
 
 interface ParsedArgs {
   files: string[];
@@ -43,7 +43,12 @@ async function loadContext(ctx: ExtensionCommandContext, parsed: ParsedArgs): Pr
   const contents = await Promise.all(
     parsed.files.map(async (f) => {
       try {
-        return await readFile(resolve(ctx.cwd, f), "utf8");
+        const resolved = resolve(ctx.cwd, f);
+        const rel = relative(ctx.cwd, resolved);
+        if (rel.startsWith("..")) throw new Error(`--file ${f} escapes workspace`);
+        const st = await fsStat(resolved);
+        if (st.size > 10 * 1024 * 1024) throw new Error(`--file ${f} exceeds 10MB limit`);
+        return await readFile(resolved, "utf8");
       } catch (e) {
         throw new Error(`could not read --file ${f}: ${e instanceof Error ? e.message : e}`);
       }
@@ -77,30 +82,28 @@ export function registerRlmCommand(pi: ExtensionAPI, controller: RlmController):
         return;
       }
 
-      let handle;
       try {
-        handle = controller.start(ctx, question, context);
+        await controller.startNative(ctx, question, context);
       } catch (e) {
         ctx.ui.notify(`RLM failed to start: ${e instanceof Error ? e.message : e}`, "error");
         return;
       }
 
-      ctx.ui.setWidget("rlm-tree", createTreeWidget(handle.tree), { placement: "aboveEditor" });
-      const statusTimer = setInterval(() => setRlmStatus(ctx.ui, handle.tree, "running"), 300);
-
-      try {
-        const res = await handle.done;
-        pi.sendMessage(
-          { customType: "rlm-answer", content: res.answer, display: true, details: { iterations: res.iterations, costUsd: res.costUsd } },
-          { triggerTurn: false },
+      const statusTimer = setInterval(() => {
+        const run = controller.current();
+        if (!run) {
+          clearInterval(statusTimer);
+          clearRlmStatus(ctx.ui);
+          return;
+        }
+        const u = run.usage;
+        ctx.ui.setStatus(
+          "rlm",
+          `● RLM turn ${run.turns} · ${formatCost(u.costUsd)} · ${formatTokens(u.inputTokens + u.outputTokens)} tok · ${u.subCalls} sub-calls`,
         );
-      } catch (e) {
-        ctx.ui.notify(`RLM error: ${e instanceof Error ? e.message : e}`, "error");
-      } finally {
-        clearInterval(statusTimer);
-        ctx.ui.setWidget("rlm-tree", undefined);
-        clearRlmStatus(ctx.ui);
-      }
+      }, 300);
+
+      pi.sendUserMessage(question);
     },
   });
 

@@ -57,12 +57,18 @@ with status, model, cost, tokens, and duration. The final answer is posted to th
 
 ## Security
 
-- Provider keys live only in the pi process; the sandbox environment is sanitized (no `*_KEY`,
-  `*_TOKEN`, `ANTHROPIC*`, `OPENAI*`, …) and the sandbox has no channel except its own stdio pipe.
-- Restricted builtins (no `eval`/`exec`/`compile`/`input`/`globals`/`locals`); per-block timeout +
-  parent watchdog (SIGKILL on hang); budget / token / timeout / consecutive-error caps.
-- The subprocess sandbox trusts the root model's Python; it is isolation-agnostic, so a stronger
-  jail can be added later behind a setting without changing the protocol.
+- **Key isolation**: provider keys live only in TypeScript (`AuthStorage`); the sandbox
+  receives prompts and returns text — never keys.
+- **NOT a security sandbox**: the Python worker exposes `__import__` and `open`. Model-authored
+  code can import networking modules (`socket`, `urllib`, `subprocess`) and read/write local
+  files. This tier trusts the root model's code. A stronger sandbox (Docker, seccomp) can be
+  added later behind a setting without protocol changes.
+- **Environment sanitization**: sensitive env vars (API keys, tokens) are stripped before the
+  worker spawns. The worker cannot read provider credentials from `os.environ`.
+- **Restricted builtins**: no `eval`/`exec`/`compile`/`input`/`globals`/`locals`; per-block
+  SIGALRM timeout + parent watchdog (SIGKILL on hang); budget / token / timeout /
+  consecutive-error caps.
+- **Trust**: project-local install requires Pi project trust.
 
 ## Layout
 

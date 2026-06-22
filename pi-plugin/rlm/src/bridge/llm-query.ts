@@ -10,6 +10,7 @@
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { NOOP_OBSERVER, type SubcallObserver } from "../state/events.ts";
+import { resolveModelId } from "../config/settings.ts";
 import type { Sampling } from "../core/types.ts";
 import { type ChatMsg, modelComplete } from "./model.ts";
 
@@ -62,14 +63,16 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
   const depth = opts.depth ?? 0;
 
   // Run one completion; report cost/tokens via `track` (a per-call or per-batch accumulator).
-  async function complete1(prompt: string, track: (u: Usage) => void): Promise<string> {
+  async function complete1(prompt: string, model: string | null, track: (u: Usage) => void): Promise<string> {
     if (prompt.length > maxPromptChars) {
       return `Error: sub-LLM prompt exceeded the size limit (${prompt.length.toLocaleString()} chars > ${maxPromptChars.toLocaleString()}). Shorten or chunk the prompt before calling llm_query.`;
     }
+    const resolved = model ? resolveModelId(opts.registry, model) : undefined;
+    if (model && !resolved) return `Error: unknown model override '${model}'`;
     try {
       const messages: ChatMsg[] = [{ role: "user", content: prompt }];
       const res = await modelComplete(messages, {
-        model: opts.workerModel,
+        model: resolved ?? opts.workerModel,
         registry: opts.registry,
         system: opts.subSystem,
         maxTokens: opts.sampling?.maxTokens,
@@ -77,7 +80,7 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
         reasoning: opts.sampling?.reasoning,
         signal: opts.signal,
       });
-      opts.onUsage?.(res.usage, opts.workerModel);
+      opts.onUsage?.(res.usage, resolved ?? opts.workerModel);
       track(res.usage);
       return res.text;
     } catch (err) {
@@ -86,11 +89,11 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
   }
 
   return {
-    async llmQuery(prompt) {
+    async llmQuery(prompt, model) {
       const id = observer.start({ kind: "llm", depth, parentId: opts.parentId, model: opts.workerModel.id, label: "llm_query", detail: preview(prompt) });
       let cost = 0;
       let tokens = 0;
-      const out = await complete1(prompt, (u) => {
+      const out = await complete1(prompt, model, (u) => {
         cost += u.cost.total;
         tokens += u.totalTokens;
       });
@@ -98,12 +101,12 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
       return out;
     },
 
-    async llmQueryBatched(prompts) {
+    async llmQueryBatched(prompts, model) {
       const id = observer.start({ kind: "batch", depth, parentId: opts.parentId, model: opts.workerModel.id, label: `llm_query ×${prompts.length}`, detail: preview(prompts[0] ?? "") });
       let cost = 0;
       let tokens = 0;
       const out = await mapPool(prompts, maxConcurrent, (p) =>
-        complete1(p, (u) => {
+        complete1(p, model, (u) => {
           cost += u.cost.total;
           tokens += u.totalTokens;
         }),

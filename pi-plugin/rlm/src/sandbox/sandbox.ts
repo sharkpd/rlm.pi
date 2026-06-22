@@ -39,6 +39,8 @@ export interface SandboxOptions {
   python?: string;
   /** Handlers for sub-LLM interrupts. Defaults reject (Phase 1 has no bridge yet). */
   handlers?: Partial<SubLlmHandlers>;
+  /** AbortSignal — immediate SIGKILL on abort, bypassing the shutdown handshake. */
+  signal?: AbortSignal;
 }
 
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "worker.py");
@@ -104,6 +106,23 @@ export class PythonSandbox {
     this.proc.on("exit", () => this.failAll(new Error(`worker exited; stderr=${this.stderr.trim()}`)));
 
     this.ready = this.waitForInit();
+
+    // Immediate SIGKILL on abort — no shutdown handshake, no 50ms wait.
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        this.disposed = true;
+        this.proc.kill("SIGKILL");
+        this.failAll(new Error("sandbox aborted"));
+      } else {
+        opts.signal.addEventListener("abort", () => {
+          if (!this.disposed) {
+            this.disposed = true;
+            try { this.proc.kill("SIGKILL"); } catch { /* already dead */ }
+            this.failAll(new Error("sandbox aborted"));
+          }
+        }, { once: true });
+      }
+    }
   }
 
   /** Spawn a sandbox and wait until the worker reports it is initialized. */
