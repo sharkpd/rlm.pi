@@ -1,0 +1,19 @@
+{
+  "name": "rlm-pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --watch run index.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "latest",
+    "@earendil-works/pi-ai": "latest",
+    "typebox": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^6.0.3"
+  }
+}
