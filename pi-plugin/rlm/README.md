@@ -26,8 +26,35 @@ pi process (TypeScript)
 
 ## Install
 
-Copy this folder to `~/.pi/agent/extensions/rlm` (global) or `.pi/extensions/rlm` (project-local),
-then `cd` into it and `npm install`. Requires `python3` on `PATH` (standard library only).
+`pi-rlm` is a Pi package. Pi provides the `@earendil-works/pi-*` and `typebox` peer dependencies;
+do not install a separate copy of them into this package. Requires `python3` on `PATH` (standard
+library only).
+
+Recommended local install while developing:
+
+```bash
+pi install /Users/hicaru/projects/zebra/rlm.pi/pi-plugin/rlm
+```
+
+Published npm package install:
+
+```bash
+npm publish  # for example as @hicaru/pi-rlm
+pi install npm:@hicaru/pi-rlm
+```
+
+Git installs require the package manifest to live at the installed repository root. For monorepo
+subdirectories like this one, prefer the local path or npm flow above.
+
+If you previously copied the extension folder directly, remove it so it does not shadow the package:
+
+```bash
+rm -rf ~/.pi/agent/extensions/rlm
+```
+
+Then run `/reload` or restart Pi. Verify with `pi list` that the package appears in
+`settings.packages`, and check that `/rlm`, `/rlm-config`, and `/rlm-stop` appear under
+[Extensions].
 
 ## Usage
 
