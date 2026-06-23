@@ -6,11 +6,12 @@ This is NOT a security sandbox: __import__ and open are available, so code can i
 
 Protocol (parent -> worker):  {"id","type":"exec"|"load_context"|"shutdown", ...}
 Protocol (worker -> parent):  {"id","ok",...result}            # response to a request
-                              {"type":"llm_query"|"llm_query_batched"|"rlm_query","rid",...}
-                                                                # mid-exec sub-LLM request
-When sandbox code calls llm_query/rlm_query, the worker writes a request line and BLOCKS
-reading stdin until the matching {"type":"llm_reply","rid",...} arrives. The parent services
-the request in-process (it holds the API keys; this worker never sees them).
+                              {"type":"llm_query"|"llm_query_batched"|"rlm_query"|...
+                               "read_file"|"grep"|"find","rid",...}
+                                                                # mid-exec helper request
+When sandbox code calls llm_query/rlm_query/read_file/grep/find, the worker writes a request line
+and BLOCKS reading stdin until the matching {"type":"llm_reply","rid",...} arrives. The parent
+services the request in-process (it holds API keys and implements ergonomic file helpers).
 """
 
 from __future__ import annotations
@@ -59,7 +60,10 @@ for _blocked in ("eval", "exec", "compile", "input", "globals", "locals"):
     _SAFE_BUILTINS[_blocked] = None
 
 RESERVED = frozenset(
-    {"llm_query", "llm_query_batched", "rlm_query", "rlm_query_batched", "SHOW_VARS", "answer", "context", "context_0"}
+    {
+        "llm_query", "llm_query_batched", "rlm_query", "rlm_query_batched",
+        "read_file", "grep", "find", "SHOW_VARS", "answer", "context", "context_0",
+    }
 )
 
 
@@ -101,6 +105,9 @@ class Worker:
         self.globals["llm_query_batched"] = self._llm_query_batched
         self.globals["rlm_query"] = self._rlm_query
         self.globals["rlm_query_batched"] = self._rlm_query_batched
+        self.globals["read_file"] = self._read_file
+        self.globals["grep"] = self._grep
+        self.globals["find"] = self._find
         self.globals["SHOW_VARS"] = self._show_vars
         self.locals["answer"] = _AnswerDict(self._capture_answer)
 
@@ -114,6 +121,9 @@ class Worker:
         g.setdefault("llm_query_batched", self._llm_query_batched)
         g.setdefault("rlm_query", self._rlm_query)
         g.setdefault("rlm_query_batched", self._rlm_query_batched)
+        g.setdefault("read_file", self._read_file)
+        g.setdefault("grep", self._grep)
+        g.setdefault("find", self._find)
         g.setdefault("SHOW_VARS", self._show_vars)
         if not isinstance(self.locals.get("answer"), _AnswerDict):
             cur = self.locals.get("answer")
@@ -180,6 +190,18 @@ class Worker:
 
     def _rlm_query(self, prompt: str, model: str | None = None) -> str:
         r = self._rpc("rlm_query", {"prompt": str(prompt), "model": model})
+        return f"Error: {r['error']}" if r.get("error") else r.get("response", "")
+
+    def _read_file(self, path: str, start: int | None = None, end: int | None = None) -> str:
+        r = self._rpc("read_file", {"path": str(path), "start": start, "end": end})
+        return f"Error: {r['error']}" if r.get("error") else r.get("response", "")
+
+    def _grep(self, pattern: str, glob: str | None = None, max_matches: int | None = None) -> str:
+        r = self._rpc("grep", {"pattern": str(pattern), "glob": glob, "maxMatches": max_matches})
+        return f"Error: {r['error']}" if r.get("error") else r.get("response", "")
+
+    def _find(self, glob: str | None = None) -> str:
+        r = self._rpc("find", {"glob": glob})
         return f"Error: {r['error']}" if r.get("error") else r.get("response", "")
 
     def _rlm_query_batched(self, prompts, model: str | None = None) -> list[str]:

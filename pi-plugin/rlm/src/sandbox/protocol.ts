@@ -39,9 +39,16 @@ export interface WorkerResponse {
 }
 
 /** Kinds of sub-LLM interrupt the worker can raise mid-exec. */
-export type InterruptKind = "llm_query" | "llm_query_batched" | "rlm_query" | "rlm_query_batched";
+export type InterruptKind =
+  | "llm_query"
+  | "llm_query_batched"
+  | "rlm_query"
+  | "rlm_query_batched"
+  | "read_file"
+  | "grep"
+  | "find";
 
-/** A mid-exec sub-LLM request from the worker. */
+/** A mid-exec sub-LLM/tool request from the worker. */
 export interface WorkerInterrupt {
   type: InterruptKind;
   rid: string;
@@ -49,15 +56,24 @@ export interface WorkerInterrupt {
   prompt?: string;
   prompts?: string[];
   model?: string | null;
+  path?: string;
+  start?: number | null;
+  end?: number | null;
+  pattern?: string;
+  glob?: string | null;
+  maxMatches?: number | null;
 }
 
 export type WorkerMessage = WorkerResponse | WorkerInterrupt;
 
-const INTERRUPT_KINDS = new Set<string>([
+export const INTERRUPT_KINDS = new Set<InterruptKind>([
   "llm_query",
   "llm_query_batched",
   "rlm_query",
   "rlm_query_batched",
+  "read_file",
+  "grep",
+  "find",
 ]);
 
 export function isInterrupt(msg: WorkerMessage): msg is WorkerInterrupt {

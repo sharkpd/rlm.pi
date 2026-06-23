@@ -3,6 +3,12 @@
  * Run: bun run pi-plugin/rlm/test/phase1.ts
  */
 
+import { createFsBridge, globToRegExp } from "../src/bridge/fs-tools.ts";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { prepareRlmContext } from "../src/mode/rlm-mode.ts";
 import { PythonSandbox } from "../src/sandbox/sandbox.ts";
 import { findReplBlocks, truncateOutput } from "../src/text/parsing.ts";
 
@@ -58,6 +64,85 @@ async function main() {
     "import os; print('A=' + str(os.environ.get('ANTHROPIC_API_KEY')) + ' O=' + str(os.environ.get('OPENAI_API_KEY')))",
   );
   check("sandbox cannot read provider keys", r.stdout.trim() === "A=None O=None", r.stdout.trim());
+
+  // file-backed environment tools (host-enforced workspace boundary)
+  const fs = createFsBridge(process.cwd());
+  const fsSb = await PythonSandbox.spawn({
+    depth: 1,
+    execTimeoutS: 2,
+    workspaceRoot: process.cwd(),
+    handlers: { readFile: fs.readFile, grep: fs.grep, find: fs.find },
+  });
+  r = await fsSb.exec("print(read_file('pi-plugin/rlm/README.md')[:20])");
+  check("read_file reads workspace files", r.stdout.trim().length > 0 && !r.stdout.includes("Error:"), r.stdout.trim());
+  r = await fsSb.exec("print(grep('RLM', 'pi-plugin/rlm/**/*.ts', 5))");
+  check("grep searches workspace files", r.stdout.includes("RLM") || r.stdout.includes("(no matches)"), r.stdout.trim().slice(0, 80));
+  r = await fsSb.exec("print(grep('[', None, 5))");
+  check("grep reports invalid patterns as errors", r.stdout.includes("Error:"), r.stdout.trim().slice(0, 80));
+  r = await fsSb.exec("print(find('pi-plugin/rlm/**/*.ts'))");
+  check("find lists matching project files", r.stdout.includes("pi-plugin/rlm/src"), r.stdout.trim().slice(0, 80));
+  r = await fsSb.exec("print(read_file('../../etc/passwd'))");
+  check("read_file rejects workspace escape", r.stdout.includes("outside the workspace root"), r.stdout.trim());
+  r = await fsSb.exec("print(read_file('definitely/missing.ts'))");
+  check(
+    "read_file missing-file error is relative and tidy",
+    r.stdout.includes("'definitely/missing.ts' not found") && !r.stdout.includes(process.cwd()),
+    r.stdout.trim(),
+  );
+  check("globstar matches zero directories", globToRegExp("a/**/b").test("a/b") && globToRegExp("a/**/b").test("a/x/b"));
+
+  const dashRoot = await mkdtemp(join(tmpdir(), "rlm-dash-"));
+  try {
+    await writeFile(join(dashRoot, "a.txt"), "hello\n-u literal\n");
+    // If ripgrep is unavailable, the bridge falls back to git grep; make the temp tree a repo
+    // so the same assertion still exercises the safe `-e pattern` path.
+    execFileSync("git", ["init"], { cwd: dashRoot, stdio: "ignore" });
+    execFileSync("git", ["add", "a.txt"], { cwd: dashRoot, stdio: "ignore" });
+    const dashFs = createFsBridge(dashRoot);
+    const dashOut = await dashFs.grep("-u", null, 20);
+    check("grep treats leading-dash patterns as literals", dashOut.includes("-u literal") && !dashOut.includes("hello"), dashOut);
+  } finally {
+    await rm(dashRoot, { recursive: true, force: true });
+  }
+
+  const sliceRoot = await mkdtemp(join(tmpdir(), "rlm-slice-"));
+  try {
+    await writeFile(join(sliceRoot, "big.txt"), Array.from({ length: 30_000 }, (_, i) => `line ${i}`).join("\n"));
+    const sliceOut = await createFsBridge(sliceRoot).readFile("big.txt", 1, 30_000);
+    check("read_file slices are preview-capped", sliceOut.includes("truncated to 20000 characters"), sliceOut.slice(-80));
+  } finally {
+    await rm(sliceRoot, { recursive: true, force: true });
+  }
+
+  const manyFiles = Array.from({ length: 2_005 }, (_, i) => `src/file-${i}.ts`);
+  const findOut = await createFsBridge(process.cwd(), { initialFiles: manyFiles }).find("src/*.ts");
+  check("find marks truncated output", findOut.includes("truncated to 2000 files"), findOut.slice(-80));
+
+  const outside = await mkdtemp(join(tmpdir(), "rlm-outside-"));
+  const inside = await mkdtemp(join(tmpdir(), "rlm-inside-"));
+  try {
+    await writeFile(join(outside, "secret.txt"), "SECRET");
+    await symlink(outside, join(inside, "evil"));
+    const evilFs = createFsBridge(inside);
+    const evilSb = await PythonSandbox.spawn({
+      depth: 1,
+      execTimeoutS: 2,
+      workspaceRoot: inside,
+      handlers: { readFile: evilFs.readFile, grep: evilFs.grep, find: evilFs.find },
+    });
+    r = await evilSb.exec("print(read_file('evil/secret.txt'))");
+    check("read_file rejects symlink workspace escape", r.stdout.includes("outside the workspace root"), r.stdout.trim());
+    await evilSb.dispose();
+  } finally {
+    await rm(inside, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+  await fsSb.dispose();
+
+  const manifest = await prepareRlmContext("", process.cwd());
+  check("empty context becomes project manifest", typeof manifest === "string" && manifest.startsWith("# Project map"), String(manifest).slice(0, 80));
+  const explicitContext = await prepareRlmContext("explicit", process.cwd());
+  check("explicit context is not replaced by manifest", explicitContext === "explicit", String(explicitContext));
 
   // answer.ready -> final answer surfaced
   r = await sandbox.exec("answer['content'] = '42'; answer['ready'] = True");

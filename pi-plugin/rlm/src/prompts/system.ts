@@ -9,6 +9,9 @@ export interface PromptMeta {
   contextType: string;
   contextChars: number;
   rootPrompt?: string;
+  workspaceRoot?: string;
+  fsTools?: boolean;
+  projectMap?: boolean;
 }
 
 export interface SystemPromptOptions {
@@ -24,7 +27,7 @@ function howToRunCode(): string {
   ].join(" ");
 }
 
-function replGlossary(recursion: boolean): string {
+function replGlossary(recursion: boolean, fsTools: boolean): string {
   const lines = [
     "Available in the REPL:",
     "- `context`: the important, potentially very long input (usually `str` or `list[str]`).",
@@ -33,6 +36,18 @@ function replGlossary(recursion: boolean): string {
     "- `llm_query_batched(prompts: list[str], model=None) -> list[str]`: run several sub-LLM calls",
     "  concurrently; output order matches input order.",
   ];
+  if (fsTools) {
+    lines.push(
+      "- `find(glob=None) -> str`: list project files (optionally filtered by a glob).",
+      "- `grep(pattern, glob=None, max_matches=None) -> str`: search file contents. Use to LOCATE code.",
+      "- `read_file(path, start=None, end=None) -> str`: read a whole file or a line range.",
+      "",
+      "Strategy: use `grep`/`find` to LOCATE, then `read_file` to pull whole files and feed them to",
+      "`llm_query` for understanding. Do not answer from grep snippets alone — read the relevant files",
+      "in full, exactly as you would sweep a long `context`. Glob support is gitignore/ripgrep-style",
+      "for navigation and may differ slightly between `grep` and `find`; verify with `read_file`.",
+    );
+  }
   if (recursion) {
     lines.push(
       "- `rlm_query(prompt, model=None)` / `rlm_query_batched(prompts, model=None)`: recursive RLM",
@@ -80,7 +95,7 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
     "",
     howToRunCode(),
     "",
-    replGlossary(recursion),
+    replGlossary(recursion, meta.fsTools ?? false),
     "",
     "REPL outputs over ~20K characters are truncated, so for long payloads slice `context` and pass the",
     "slices through `llm_query` rather than printing them whole.",
@@ -96,8 +111,9 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
 
 /** The one-line context metadata, also reused by the per-turn prompt in headless mode. */
 export function buildMetadataLine(meta: PromptMeta): string {
-  const body =
-    `Your context is a ${meta.contextType} of ${meta.contextChars.toLocaleString()} total characters. ` +
-    "Each sub-LLM call can handle roughly ~100k tokens at once.";
+  const contextDesc = meta.projectMap && meta.workspaceRoot
+    ? `Context is a project map for workspace ${meta.workspaceRoot}; file contents are available via read_file/grep/find.`
+    : `Your context is a ${meta.contextType} of ${meta.contextChars.toLocaleString()} total characters.`;
+  const body = `${contextDesc} Each sub-LLM call can handle roughly ~100k tokens at once.`;
   return meta.rootPrompt ? `Answer the following: ${meta.rootPrompt}\n\n${body}` : body;
 }

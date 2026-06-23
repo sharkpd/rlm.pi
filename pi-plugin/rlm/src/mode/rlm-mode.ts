@@ -8,9 +8,11 @@
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { buildProjectManifest } from "../bridge/fs-tools.ts";
 import { modelRef, resolveModelId, saveSettings } from "../config/settings.ts";
 import { createEngine } from "../core/engine.ts";
-import type { RlmConfig, RlmResult } from "../core/types.ts";
+import type { RlmConfig, RlmInput, RlmResult } from "../core/types.ts";
+import { contextLength } from "../text/tokens.ts";
 import { AgentTree } from "../state/agent-tree.ts";
 import { treeObserver } from "../state/events.ts";
 
@@ -24,6 +26,14 @@ export interface RunHandle {
   tree: AgentTree;
   abort: () => void;
   done: Promise<RlmResult>;
+}
+
+export async function prepareRlmContext(context: unknown, cwd: string | undefined, signal?: AbortSignal): Promise<unknown> {
+  return contextLength(context) === 0 && cwd ? buildProjectManifest(cwd, { signal }) : context;
+}
+
+function isProjectMapContext(originalContext: unknown, preparedContext: unknown, cwd: string | undefined): boolean {
+  return Boolean(cwd && contextLength(originalContext) === 0 && contextLength(preparedContext) > 0);
 }
 
 export class RlmController {
@@ -86,22 +96,26 @@ export class RlmController {
     const abortController = new AbortController();
     this.active = abortController;
 
-    const engine = createEngine({
-      smartModel: models.smart,
-      workerModel: models.worker,
-      registry: ctx.modelRegistry,
-      config: this.config,
-      signal: abortController.signal,
-      observer: treeObserver(tree),
-      limits: {
-        maxBudgetUsd: this.config.maxBudgetUsd,
-        maxTimeoutMs: this.config.maxTimeoutMs,
-        maxTokens: this.config.maxTokens,
-        maxErrors: this.config.maxErrors,
-      },
-    });
-
-    const done = engine({ rootPrompt, context, depth: 0 }).finally(() => {
+    const done = (async () => {
+      const workspaceRoot = ctx.cwd;
+      const contextValue = await prepareRlmContext(context, workspaceRoot, abortController.signal);
+      const engine = createEngine({
+        smartModel: models.smart,
+        workerModel: models.worker,
+        registry: ctx.modelRegistry,
+        config: this.config,
+        signal: abortController.signal,
+        observer: treeObserver(tree),
+        limits: {
+          maxBudgetUsd: this.config.maxBudgetUsd,
+          maxTimeoutMs: this.config.maxTimeoutMs,
+          maxTokens: this.config.maxTokens,
+          maxErrors: this.config.maxErrors,
+        },
+      });
+      const input: RlmInput = { rootPrompt, context: contextValue, depth: 0, workspaceRoot, projectMap: isProjectMapContext(context, contextValue, workspaceRoot) };
+      return engine(input);
+    })().finally(() => {
       if (this.active === abortController) this.active = null;
     });
 

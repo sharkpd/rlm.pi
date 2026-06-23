@@ -26,6 +26,8 @@ export interface RlmBridgeOptions {
   remainingBudget?: () => { budgetUsd?: number; timeoutMs?: number };
   /** Called with a child run's total cost/tokens so the parent LimitGuard debits it. */
   onChildUsage?: (costUsd: number, inputTokens: number, outputTokens: number) => void;
+  /** Workspace root inherited by recursive children for filesystem tools. */
+  workspaceRoot?: string;
 }
 
 export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
@@ -47,6 +49,7 @@ export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
         smartModelOverride: model ?? undefined,
         remainingBudgetUsd: rem.budgetUsd,
         remainingTimeoutMs: rem.timeoutMs,
+        workspaceRoot: opts.workspaceRoot,
       });
       opts.onChildUsage?.(res.costUsd, res.inputTokens, res.outputTokens);
       return res.answer;

@@ -28,6 +28,9 @@ export interface SubLlmHandlers {
   llmQueryBatched(prompts: string[], model: string | null, depth: number): Promise<string[]>;
   rlmQuery(prompt: string, model: string | null, depth: number): Promise<string>;
   rlmQueryBatched(prompts: string[], model: string | null, depth: number): Promise<string[]>;
+  readFile(path: string, start: number | null, end: number | null): Promise<string>;
+  grep(pattern: string, glob: string | null, maxMatches: number | null): Promise<string>;
+  find(glob: string | null): Promise<string>;
 }
 
 export interface SandboxOptions {
@@ -43,6 +46,8 @@ export interface SandboxOptions {
   handlers?: Partial<SubLlmHandlers>;
   /** AbortSignal — immediate SIGKILL on abort, bypassing the shutdown handshake. */
   signal?: AbortSignal;
+  /** Workspace root for host-side filesystem tools. Enforcement happens in the handlers. */
+  workspaceRoot?: string;
 }
 
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "worker.py");
@@ -63,6 +68,9 @@ const REJECT: SubLlmHandlers = {
   llmQueryBatched: async (p) => p.map(() => "Error: sub-LLM bridge not configured"),
   rlmQuery: async () => "Error: sub-LLM bridge not configured",
   rlmQueryBatched: async (p) => p.map(() => "Error: sub-LLM bridge not configured"),
+  readFile: async () => "Error: filesystem tools are not available in this run",
+  grep: async () => "Error: filesystem tools are not available in this run",
+  find: async () => "Error: filesystem tools are not available in this run",
 };
 
 /** Distributive omit so each union member keeps its own fields (plain Omit collapses to shared keys). */
@@ -267,9 +275,18 @@ export class PythonSandbox {
       } else if (msg.type === "llm_query_batched") {
         const responses = await h.llmQueryBatched(msg.prompts ?? [], msg.model ?? null, d);
         this.reply(msg.rid, { responses });
-      } else {
+      } else if (msg.type === "rlm_query_batched") {
         const responses = await h.rlmQueryBatched(msg.prompts ?? [], msg.model ?? null, d);
         this.reply(msg.rid, { responses });
+      } else if (msg.type === "read_file") {
+        const response = await h.readFile(msg.path ?? "", msg.start ?? null, msg.end ?? null);
+        this.reply(msg.rid, { response });
+      } else if (msg.type === "grep") {
+        const response = await h.grep(msg.pattern ?? "", msg.glob ?? null, msg.maxMatches ?? null);
+        this.reply(msg.rid, { response });
+      } else {
+        const response = await h.find(msg.glob ?? null);
+        this.reply(msg.rid, { response });
       }
     } catch (err) {
       this.reply(msg.rid, { error: err instanceof Error ? err.message : String(err) });

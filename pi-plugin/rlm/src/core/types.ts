@@ -61,6 +61,10 @@ export interface RlmInput {
   remainingBudgetUsd?: number;
   /** Remaining timeout for this subtree (set by parent from its LimitGuard). */
   remainingTimeoutMs?: number;
+  /** Workspace root exposed to sanctioned file-backed REPL tools. */
+  workspaceRoot?: string;
+  /** True when context was synthesized by buildProjectManifest. */
+  projectMap?: boolean;
 }
 
 /** Result of a completed RLM run. */

@@ -9,6 +9,7 @@
 
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { createFsBridge } from "../bridge/fs-tools.ts";
 import { createLlmBridge } from "../bridge/llm-query.ts";
 import { type ChatMsg, modelComplete } from "../bridge/model.ts";
 import { createRlmHandlers } from "../bridge/rlm-query.ts";
@@ -102,7 +103,12 @@ export function createEngine(deps: EngineDeps): RunRlm {
       onChildUsage: (costUsd, inputTokens, outputTokens) => {
         limits.addRaw(costUsd, inputTokens, outputTokens);
       },
+      workspaceRoot: input.workspaceRoot,
     });
+    const fsInitialFiles = input.projectMap && typeof input.context === "string"
+      ? input.context.split("\n").filter((line) => line && !line.startsWith("#"))
+      : undefined;
+    const fs = input.workspaceRoot ? createFsBridge(input.workspaceRoot, { signal: deps.signal, initialFiles: fsInitialFiles }) : undefined;
 
     const sandbox = await PythonSandbox.spawn({
       depth: input.depth,
@@ -110,13 +116,17 @@ export function createEngine(deps: EngineDeps): RunRlm {
       requestTimeoutMs: deps.config.requestTimeoutMs,
       python: deps.config.python,
       signal: deps.signal,
-      handlers: { ...llm, ...rlm },
+      workspaceRoot: input.workspaceRoot,
+      handlers: { ...llm, ...rlm, ...(fs ? { readFile: fs.readFile, grep: fs.grep, find: fs.find } : {}) },
     });
 
     const meta = {
       contextType: contextTypeLabel(input.context),
       contextChars: contextLength(input.context),
       rootPrompt: input.rootPrompt || undefined,
+      workspaceRoot: input.workspaceRoot,
+      fsTools: Boolean(fs),
+      projectMap: input.projectMap ?? false,
     };
     const system = buildRlmSystemPrompt(meta, {
       orchestrator: deps.config.orchestrator,
