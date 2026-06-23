@@ -42,10 +42,18 @@ function replGlossary(recursion: boolean, fsTools: boolean): string {
       "- `grep(pattern, glob=None, max_matches=None) -> str`: search file contents. Use to LOCATE code.",
       "- `read_file(path, start=None, end=None) -> str`: read a whole file or a line range.",
       "",
-      "Strategy: use `grep`/`find` to LOCATE, then `read_file` to pull whole files and feed them to",
-      "`llm_query` for understanding. Do not answer from grep snippets alone — read the relevant files",
-      "in full, exactly as you would sweep a long `context`. Glob support is gitignore/ripgrep-style",
-      "for navigation and may differ slightly between `grep` and `find`; verify with `read_file`.",
+      "You are an ORCHESTRATOR over the repository, not a reader. Do NOT print whole files or read",
+      "many files into your own message stream — that pulls the repo back into your context and",
+      "defeats the method (the single most common failure mode). Instead:",
+      "  1. `grep`/`find` to LOCATE the relevant files.",
+      "  2. Pass file CONTENTS straight into a sub-LLM — never into your own output. One file:",
+      "       ans = llm_query(f\"{question}\\n\\nFile {path}:\\n{read_file(path)}\")",
+      "     Many files (preferred — batch the survivors of your grep/find):",
+      "       findings = llm_query_batched([f\"For: {question}\\n\\n{read_file(p)}\" for p in paths])",
+      "  3. `print()` ONLY short things: counts, file lists, one-line summaries, or the final answer",
+      "     — never raw file bodies. Aggregate sub-LLM findings in Python, then answer.",
+      "Read a file directly into your own context only when it is small AND a quick keyword/regex",
+      "check would already pin the answer. Glob support is gitignore/ripgrep-style; verify with `read_file`.",
     );
   }
   if (recursion) {
@@ -97,8 +105,8 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
     "",
     replGlossary(recursion, meta.fsTools ?? false),
     "",
-    "REPL outputs over ~20K characters are truncated, so for long payloads slice `context` and pass the",
-    "slices through `llm_query` rather than printing them whole.",
+    "REPL outputs over ~20K characters are truncated, so for long payloads (including `read_file`",
+    "output) slice them and pass the slices through `llm_query` rather than printing them whole.",
     "",
     "Start by probing `context` (print a few lines, count items). Then build up an answer to the query.",
   ];
@@ -112,7 +120,7 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
 /** The one-line context metadata, also reused by the per-turn prompt in headless mode. */
 export function buildMetadataLine(meta: PromptMeta): string {
   const contextDesc = meta.projectMap && meta.workspaceRoot
-    ? `Context is a project map for workspace ${meta.workspaceRoot}; file contents are available via read_file/grep/find.`
+    ? `Context is a project map (file list) for workspace ${meta.workspaceRoot}. Locate files with grep/find, but read file CONTENTS only through llm_query/llm_query_batched — do not pull file bodies into your own context.`
     : `Your context is a ${meta.contextType} of ${meta.contextChars.toLocaleString()} total characters.`;
   const body = `${contextDesc} Each sub-LLM call can handle roughly ~100k tokens at once.`;
   return meta.rootPrompt ? `Answer the following: ${meta.rootPrompt}\n\n${body}` : body;

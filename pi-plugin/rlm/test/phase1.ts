@@ -13,6 +13,7 @@ import { DEFAULT_CONFIG } from "../src/config/defaults.ts";
 import { loadSettings, mergeConfig, saveSettings } from "../src/config/settings.ts";
 import { turnHadError } from "../src/core/answer.ts";
 import { PythonSandbox } from "../src/sandbox/sandbox.ts";
+import { buildMetadataLine, buildRlmSystemPrompt } from "../src/prompts/system.ts";
 import { findReplBlocks, truncateOutput } from "../src/text/parsing.ts";
 
 let failures = 0;
@@ -31,6 +32,19 @@ async function main() {
   const blocks = findReplBlocks("think\n```repl\nprint(1)\n```\nmore\n```repl\nx=2\n```");
   check("findReplBlocks extracts 2 blocks", blocks.length === 2, JSON.stringify(blocks));
   check("truncateOutput elides", truncateOutput("a".repeat(100), 40).includes("elided"));
+  const sp = buildRlmSystemPrompt(
+    { contextType: "str", contextChars: 0, fsTools: true, projectMap: true, workspaceRoot: "/x" },
+    { orchestrator: true },
+  );
+  check("prompt forbids dumping files", sp.includes("ORCHESTRATOR over the repository") && sp.includes("never into your own output"));
+  check("prompt shows batched delegation idiom", sp.includes("llm_query_batched(["));
+  check("prompt includes read_file truncation guidance", sp.includes("including `read_file`") && sp.includes("slice them and pass the slices"));
+  const metadata = buildMetadataLine({ contextType: "str", contextChars: 0, projectMap: true, workspaceRoot: "/x" });
+  check(
+    "metadata routes file contents through sub-LLMs",
+    metadata.includes("read file CONTENTS only through llm_query/llm_query_batched") &&
+      !metadata.includes("file contents are available via read_file/grep/find"),
+  );
 
   const sandbox = await PythonSandbox.spawn({
     depth: 1,
