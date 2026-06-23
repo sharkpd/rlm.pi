@@ -203,7 +203,10 @@ export function createEngine(deps: EngineDeps): RunRlm {
           sampling: { reasoning: deps.config.smartReasoning },
           signal: deps.signal,
         });
-        observer.action(selfId, `▶ ${previewText(turn.blocks[0] ?? turn.response)}`);
+        const allBlocks = turn.blocks.length > 0
+          ? turn.blocks.map((b) => previewText(b, 400)).join("\n")
+          : previewText(turn.response, 400);
+        observer.action(selfId, `▶ ${allBlocks}`);
         observer.result(selfId, previewStdout(turn.results));
         limits.addUsage(turn.usage);
         observer.usage(selfId, turn.usage.cost.total, turn.usage.totalTokens);

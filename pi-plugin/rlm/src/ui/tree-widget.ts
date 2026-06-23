@@ -12,6 +12,7 @@ type TreeColor = "accent" | "success" | "error" | "muted";
 interface RenderNode {
   readonly node: TreeNode;
   readonly repeatCount: number;
+  readonly details?: ReadonlyArray<{ args?: string; resultPreview?: string }>;
 }
 
 const COLOR: Readonly<Record<TreeNode["kind"], TreeColor>> = Object.freeze({
@@ -47,19 +48,38 @@ function coloredRows(theme: Theme, color: "dim" | "muted", rows: readonly string
   return rows.map((line) => theme.fg(color, line));
 }
 
-function nodeLines(node: TreeNode, theme: Theme, width: number, prefix: string, childIndent: string, repeatCount = 1): string[] {
+function nodeLines(
+  node: TreeNode,
+  theme: Theme,
+  width: number,
+  prefix: string,
+  childIndent: string,
+  repeatCount = 1,
+  details?: ReadonlyArray<{ args?: string; resultPreview?: string }>,
+): string[] {
   const lines: string[] = [truncateToWidth(`${prefix}${headline(node, theme, repeatCount)}`, width)];
   const nodeDetail = node.kind === "root" && node.detail?.startsWith("turn ") ? undefined : node.detail;
   const detail = node.args ?? nodeDetail;
   if (detail) lines.push(...coloredRows(theme, "dim", wrapPreview(detail, width, `${childIndent}  `, "")));
   if (node.status === "error" && node.detail) lines.push(truncateToWidth(`${childIndent}  ${theme.fg("error", `✗ ${node.detail}`)}`, width));
   else if (node.resultPreview) lines.push(...coloredRows(theme, "muted", wrapPreview(node.resultPreview, width, `${childIndent}  `, "→ ")));
+  // Sub-item rendering for grouped nodes
+  if (repeatCount > 1 && details && details.length > 0) {
+    const maxSubItems = 3;
+    const shown = details.slice(0, maxSubItems);
+    for (const item of shown) {
+      const itemLine = [item.args, item.resultPreview].filter(Boolean).join(" → ");
+      lines.push(truncateToWidth(`${childIndent}  ${theme.fg("dim", itemLine)}`, width));
+    }
+    const hidden = details.length - shown.length;
+    if (hidden > 0) lines.push(truncateToWidth(`${childIndent}  ${theme.fg("dim", `(+${hidden} more)`)}`, width));
+  }
   return lines;
 }
 
 function toolGroupKey(node: TreeNode): string | undefined {
   if (node.kind !== "tool") return undefined;
-  if (node.label === "grep") return "tool:grep";
+  if (node.label === "grep" || node.label === "read_file" || node.label === "find") return `tool:${node.label}`;
   return `tool:${node.label}:${node.args ?? ""}`;
 }
 
@@ -84,7 +104,9 @@ function renderChildren(tree: AgentTree, parentId: string | undefined): RenderNo
       rendered.push({ node, repeatCount: 1 });
       continue;
     }
-    rendered[existingIndex] = { node, repeatCount: existing.repeatCount + 1 };
+    const prevDetail = { args: node.args, resultPreview: node.resultPreview };
+    const details = existing.details ? [...existing.details, prevDetail] : [prevDetail];
+    rendered[existingIndex] = { node: existing.node, repeatCount: existing.repeatCount + 1, details };
   }
   return rendered;
 }
@@ -95,7 +117,7 @@ function renderSubtree(tree: AgentTree, parentId: string | undefined, theme: The
     const last = i === kids.length - 1;
     const branch = parentId === undefined ? "" : last ? "└─ " : "├─ ";
     const childIndent = parentId === undefined ? "" : indent + (last ? "   " : "│  ");
-    lines.push(...nodeLines(rendered.node, theme, width, indent + branch, childIndent, rendered.repeatCount));
+    lines.push(...nodeLines(rendered.node, theme, width, indent + branch, childIndent, rendered.repeatCount, rendered.details));
     renderSubtree(tree, rendered.node.id, theme, width, childIndent, lines);
   });
 }
