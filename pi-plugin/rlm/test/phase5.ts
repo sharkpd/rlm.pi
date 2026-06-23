@@ -90,8 +90,16 @@ async function main() {
   obs.usage(root, 0.0123, 1200);
   const tool = obs.start({ kind: "tool", depth: 0, parentId: root, label: "read_file", args: "src/auth/jwt.ts:1-120" });
   obs.end(tool, { resultPreview: "118 lines · 3.2k chars" });
+  const repeatedTool = obs.start({ kind: "tool", depth: 0, parentId: root, label: "read_file", args: "src/auth/jwt.ts:1-120" });
+  obs.end(repeatedTool, { resultPreview: "118 lines · 3.2k chars" });
+  const grepOne = obs.start({ kind: "tool", depth: 0, parentId: root, label: "grep", args: "auth src/**/*.ts (max 20)" });
+  obs.end(grepOne, { resultPreview: "3 matches in 2 files" });
+  const grepTwo = obs.start({ kind: "tool", depth: 0, parentId: root, label: "grep", args: "token src/**/*.ts (max 20)" });
+  obs.end(grepTwo, { resultPreview: "5 matches in 3 files" });
   const llm = obs.start({ kind: "llm", depth: 0, parentId: root, model: "worker", label: "llm_query", args: "prompt: summarize chunk" });
   obs.end(llm, { costUsd: 0.0003, tokens: 800, resultPreview: "Worker response summary with exported symbol details" });
+  const secondLlm = obs.start({ kind: "llm", depth: 0, parentId: root, model: "worker", label: "llm_query", args: "prompt: summarize other chunk" });
+  obs.end(secondLlm, { costUsd: 0.0002, tokens: 400, resultPreview: "Second worker response summary" });
   const rlm = obs.start({ kind: "rlm", depth: 1, parentId: root, model: "smart", label: "rlm_query", detail: "sub-problem" });
   obs.action(root, "▶ print('root stdout sample')");
   obs.result(root, "root stdout sample");
@@ -112,6 +120,9 @@ async function main() {
   check("root action preview rendered", text.includes("▶ print('root stdout sample')"));
   check("root stdout preview rendered", text.includes("→ root stdout sample"));
   check("read_file tool rendered", text.includes("read_file"));
+  check("repeated read_file calls are counted", text.includes("read_file(2)"));
+  check("repeated grep calls are counted", text.includes("grep(2)"));
+  check("llm_query calls are not collapsed", !text.includes("llm_query(2)"));
   check("tool args rendered", text.includes("src/auth/jwt.ts:1-120"));
   check("tool result preview rendered", text.includes("→ 118 lines"));
   check("rlm_query child rendered", text.includes("rlm_query"));

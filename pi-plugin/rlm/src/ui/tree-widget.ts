@@ -9,6 +9,11 @@ import { formatCost, formatDuration, formatTokens, kindLabel, statusGlyph } from
 type WidgetFactory = (tui: TUI, theme: Theme) => Component & { dispose?(): void };
 type TreeColor = "accent" | "success" | "error" | "muted";
 
+interface RenderNode {
+  readonly node: TreeNode;
+  readonly repeatCount: number;
+}
+
 const COLOR: Readonly<Record<TreeNode["kind"], TreeColor>> = Object.freeze({
   root: "accent",
   rlm: "accent",
@@ -17,10 +22,11 @@ const COLOR: Readonly<Record<TreeNode["kind"], TreeColor>> = Object.freeze({
   tool: "muted",
 });
 
-function headline(node: TreeNode, theme: Theme): string {
+function headline(node: TreeNode, theme: Theme, repeatCount = 1): string {
   const statusColor: TreeColor = node.status === "error" ? "error" : node.status === "done" ? "success" : "accent";
   const glyph = theme.fg(statusColor, statusGlyph(node.status));
-  const labelText = node.label || kindLabel(node.kind);
+  const baseLabel = node.label || kindLabel(node.kind);
+  const labelText = repeatCount > 1 ? `${baseLabel}(${repeatCount})` : baseLabel;
   const label = theme.fg(COLOR[node.kind], labelText);
   const model = node.model ? theme.fg("dim", ` ${node.model}`) : "";
   const stats: string[] = [];
@@ -41,8 +47,8 @@ function coloredRows(theme: Theme, color: "dim" | "muted", rows: readonly string
   return rows.map((line) => theme.fg(color, line));
 }
 
-function nodeLines(node: TreeNode, theme: Theme, width: number, prefix: string, childIndent: string): string[] {
-  const lines: string[] = [truncateToWidth(`${prefix}${headline(node, theme)}`, width)];
+function nodeLines(node: TreeNode, theme: Theme, width: number, prefix: string, childIndent: string, repeatCount = 1): string[] {
+  const lines: string[] = [truncateToWidth(`${prefix}${headline(node, theme, repeatCount)}`, width)];
   const nodeDetail = node.kind === "root" && node.detail?.startsWith("turn ") ? undefined : node.detail;
   const detail = node.args ?? nodeDetail;
   if (detail) lines.push(...coloredRows(theme, "dim", wrapPreview(detail, width, `${childIndent}  `, "")));
@@ -51,14 +57,46 @@ function nodeLines(node: TreeNode, theme: Theme, width: number, prefix: string, 
   return lines;
 }
 
+function toolGroupKey(node: TreeNode): string | undefined {
+  if (node.kind !== "tool") return undefined;
+  if (node.label === "grep") return "tool:grep";
+  return `tool:${node.label}:${node.args ?? ""}`;
+}
+
+function renderChildren(tree: AgentTree, parentId: string | undefined): RenderNode[] {
+  const rendered: RenderNode[] = [];
+  const groupedIndexes = new Map<string, number>();
+  for (const node of tree.children(parentId)) {
+    const key = toolGroupKey(node);
+    if (key === undefined) {
+      rendered.push({ node, repeatCount: 1 });
+      continue;
+    }
+    const existingIndex = groupedIndexes.get(key);
+    if (existingIndex === undefined) {
+      groupedIndexes.set(key, rendered.length);
+      rendered.push({ node, repeatCount: 1 });
+      continue;
+    }
+    const existing = rendered[existingIndex];
+    if (existing === undefined) {
+      groupedIndexes.set(key, rendered.length);
+      rendered.push({ node, repeatCount: 1 });
+      continue;
+    }
+    rendered[existingIndex] = { node, repeatCount: existing.repeatCount + 1 };
+  }
+  return rendered;
+}
+
 function renderSubtree(tree: AgentTree, parentId: string | undefined, theme: Theme, width: number, indent: string, lines: string[]): void {
-  const kids = tree.children(parentId);
-  kids.forEach((node, i) => {
+  const kids = renderChildren(tree, parentId);
+  kids.forEach((rendered, i) => {
     const last = i === kids.length - 1;
     const branch = parentId === undefined ? "" : last ? "└─ " : "├─ ";
     const childIndent = parentId === undefined ? "" : indent + (last ? "   " : "│  ");
-    lines.push(...nodeLines(node, theme, width, indent + branch, childIndent));
-    renderSubtree(tree, node.id, theme, width, childIndent, lines);
+    lines.push(...nodeLines(rendered.node, theme, width, indent + branch, childIndent, rendered.repeatCount));
+    renderSubtree(tree, rendered.node.id, theme, width, childIndent, lines);
   });
 }
 
