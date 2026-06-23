@@ -8,6 +8,16 @@ export interface Sampling {
   reasoning?: ThinkingLevel;
 }
 
+export interface FsLimits {
+  maxReadBytes: number;
+  maxOutputChars: number;
+  maxFindFiles: number;
+  maxManifestFiles: number;
+  commandTimeoutMs: number;
+  grepDefaultMaxMatches: number;
+  grepMaxMatchesCeiling: number;
+}
+
 export interface RlmConfig {
   /** Persistent editor-routing mode; when enabled, plain interactive prompts use RLM. */
   enabled: boolean;
@@ -39,6 +49,12 @@ export interface RlmConfig {
   compactionThresholdPct: number;
   /** Python executable used to launch the sandbox worker. */
   python: string;
+  /** Filesystem tool limits for read_file/grep/find/project-map generation. */
+  fsLimits: FsLimits;
+  /** Worker startup wait before treating sandbox init as failed (ms). */
+  sandboxInitTimeoutMs: number;
+  /** SECURITY: allow first-class fs tools to read outside the workspace root. */
+  allowReadOutsideWorkspace: boolean;
   /** Sampling for the root smart model. */
   smartReasoning?: ThinkingLevel;
   /** Sampling for sub-LLM (worker) calls. */

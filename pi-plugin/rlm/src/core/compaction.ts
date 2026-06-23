@@ -11,6 +11,8 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { type ChatMsg, modelComplete } from "../bridge/model.ts";
 import { estimateMessageTokens } from "../text/tokens.ts";
 
+const DEFAULT_CONTEXT_WINDOW = 128_000;
+
 const SUMMARY_REQUEST =
   "Summarize your progress so far. Include: (1) which sub-tasks are done and which remain; " +
   "(2) any concrete intermediate results — numbers, values, variable names — preserved exactly; " +
@@ -19,15 +21,15 @@ const SUMMARY_REQUEST =
 export interface CompactionDeps {
   model: Model<Api>;
   registry: ModelRegistry;
-  contextWindow: number;
+  contextWindow?: number;
   thresholdPct?: number;
   signal?: AbortSignal;
 }
 
 /** True if the history is at/over the compaction threshold. */
 export function shouldCompact(history: ChatMsg[], deps: CompactionDeps): boolean {
-  if (!deps.contextWindow || deps.contextWindow <= 0) return false;
-  const threshold = (deps.thresholdPct ?? 0.85) * deps.contextWindow;
+  const contextWindow = deps.contextWindow && deps.contextWindow > 0 ? deps.contextWindow : DEFAULT_CONTEXT_WINDOW;
+  const threshold = (deps.thresholdPct ?? 0.85) * contextWindow;
   return estimateMessageTokens(history) >= threshold;
 }
 

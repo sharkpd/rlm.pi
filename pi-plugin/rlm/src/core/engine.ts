@@ -19,7 +19,7 @@ import { buildTurnPrompt, FINALIZE_PROMPT } from "../prompts/user.ts";
 import { NOOP_OBSERVER, type SubcallObserver } from "../state/events.ts";
 import { PythonSandbox } from "../sandbox/sandbox.ts";
 import { contextLength, contextTypeLabel } from "../text/tokens.ts";
-import { finalAnswerOf, formatReplOutputs, turnHadError } from "./answer.ts";
+import { finalAnswerOf, formatReplOutputs, latestAnswerContentOf, turnHadError } from "./answer.ts";
 import { compactHistory, shouldCompact } from "./compaction.ts";
 import { runTurn } from "./iteration.ts";
 import { type Limits, LimitError, LimitGuard } from "./limits.ts";
@@ -105,44 +105,61 @@ export function createEngine(deps: EngineDeps): RunRlm {
       },
       workspaceRoot: input.workspaceRoot,
     });
-    const fsInitialFiles = input.projectMap && typeof input.context === "string"
-      ? input.context.split("\n").filter((line) => line && !line.startsWith("#"))
-      : undefined;
-    const fs = input.workspaceRoot ? createFsBridge(input.workspaceRoot, { signal: deps.signal, initialFiles: fsInitialFiles }) : undefined;
-
-    const sandbox = await PythonSandbox.spawn({
-      depth: input.depth,
-      execTimeoutS: deps.config.execTimeoutS,
-      requestTimeoutMs: deps.config.requestTimeoutMs,
-      python: deps.config.python,
-      signal: deps.signal,
-      workspaceRoot: input.workspaceRoot,
-      handlers: { ...llm, ...rlm, ...(fs ? { readFile: fs.readFile, grep: fs.grep, find: fs.find } : {}) },
-    });
-
-    const meta = {
-      contextType: contextTypeLabel(input.context),
-      contextChars: contextLength(input.context),
-      rootPrompt: input.rootPrompt || undefined,
-      workspaceRoot: input.workspaceRoot,
-      fsTools: Boolean(fs),
-      projectMap: input.projectMap ?? false,
-    };
-    const system = buildRlmSystemPrompt(meta, {
-      orchestrator: deps.config.orchestrator,
-      recursion: input.depth + 1 < deps.config.maxDepth,
-    });
-    let history: ChatMsg[] = [{ role: "system", content: system }];
-
+    let sandbox: PythonSandbox | undefined;
     let best = "";
     let compactions = 0;
     let completedTurns = 0;
     let nodeStatus: "done" | "error" = "done";
     try {
+      const fsInitialFiles = input.projectMap && typeof input.context === "string"
+        ? input.context.split("\n").filter((line) => line && !line.startsWith("#"))
+        : undefined;
+      const fs = input.workspaceRoot
+        ? createFsBridge(input.workspaceRoot, {
+            signal: deps.signal,
+            initialFiles: fsInitialFiles,
+            observer,
+            parentId: selfId,
+            depth: input.depth,
+            limits: deps.config.fsLimits,
+            allowReadOutsideWorkspace: deps.config.allowReadOutsideWorkspace,
+          })
+        : undefined;
+
+      sandbox = await PythonSandbox.spawn({
+        depth: input.depth,
+        execTimeoutS: deps.config.execTimeoutS,
+        requestTimeoutMs: deps.config.requestTimeoutMs,
+        python: deps.config.python,
+        signal: deps.signal,
+        workspaceRoot: input.workspaceRoot,
+        initTimeoutMs: deps.config.sandboxInitTimeoutMs,
+        handlers: { ...llm, ...rlm, ...(fs ? { readFile: fs.readFile, grep: fs.grep, find: fs.find } : {}) },
+      });
+
+      const meta = {
+        contextType: contextTypeLabel(input.context),
+        contextChars: contextLength(input.context),
+        rootPrompt: input.rootPrompt || undefined,
+        workspaceRoot: input.workspaceRoot,
+        fsTools: Boolean(fs),
+        projectMap: input.projectMap ?? false,
+      };
+      const system = buildRlmSystemPrompt(meta, {
+        orchestrator: deps.config.orchestrator,
+        recursion: input.depth + 1 < deps.config.maxDepth,
+      });
+      let history: ChatMsg[] = [{ role: "system", content: system }];
+      let pendingReplOutputs: string | undefined;
       await sandbox.loadContext(input.context);
       for (let i = 0; i < deps.config.maxIterations; i++) {
         limits.checkTimeout();
         observer.detail(selfId, `turn ${i + 1}/${deps.config.maxIterations}`);
+
+        if (pendingReplOutputs) {
+          appendUserMessage(history, pendingReplOutputs);
+          pendingReplOutputs = undefined;
+        }
 
         if (deps.config.compaction) {
           const compactionDeps = {
@@ -157,7 +174,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
           }
         }
 
-        history.push({ role: "user", content: buildTurnPrompt(i, deps.config.maxIterations) });
+        appendUserMessage(history, buildTurnPrompt(i, deps.config.maxIterations));
 
         const turn = await runTurn(history, sandbox, {
           model: smartModel,
@@ -168,7 +185,9 @@ export function createEngine(deps: EngineDeps): RunRlm {
         limits.addUsage(turn.usage);
         observer.usage(selfId, turn.usage.cost.total, turn.usage.totalTokens);
         deps.onUsage?.(turn.usage, "root");
-        if (turn.response.trim()) best = turn.response;
+        const answerContent = latestAnswerContentOf(turn.results);
+        if (answerContent) best = answerContent;
+        else if (!best && turn.response.trim()) best = turn.response;
         completedTurns = i + 1;
 
         const final = finalAnswerOf(turn.results);
@@ -176,8 +195,9 @@ export function createEngine(deps: EngineDeps): RunRlm {
 
         limits.observe(turnHadError(turn.results));
         history.push({ role: "assistant", content: turn.response });
-        history.push({ role: "user", content: formatReplOutputs(turn.results) });
+        pendingReplOutputs = formatReplOutputs(turn.results);
       }
+      if (pendingReplOutputs) appendUserMessage(history, pendingReplOutputs);
       return result(await finalize(history, deps, limits), deps.config.maxIterations, limits);
     } catch (err) {
       // Abort is a user action — resolve with the best partial, not an error.
@@ -192,10 +212,19 @@ export function createEngine(deps: EngineDeps): RunRlm {
       throw err;
     } finally {
       observer.end(selfId, nodeStatus === "error" ? { error: "stopped" } : undefined);
-      await sandbox.dispose();
+      await sandbox?.dispose();
     }
   };
   return run;
+}
+
+function appendUserMessage(history: ChatMsg[], content: string): void {
+  const last = history.at(-1);
+  if (last?.role === "user") {
+    last.content = [last.content, content].join("\n\n");
+    return;
+  }
+  history.push({ role: "user", content });
 }
 
 function result(answer: string, iterations: number, limits: LimitGuard): RlmResult {
@@ -205,7 +234,9 @@ function result(answer: string, iterations: number, limits: LimitGuard): RlmResu
 
 /** Out of turns: ask the model for its best final answer (plain text). */
 async function finalize(history: ChatMsg[], deps: EngineDeps, limits: LimitGuard): Promise<string> {
-  const { text, usage } = await modelComplete([...history, { role: "user", content: FINALIZE_PROMPT }], {
+  const finalHistory = [...history];
+  appendUserMessage(finalHistory, FINALIZE_PROMPT);
+  const { text, usage } = await modelComplete(finalHistory, {
     model: deps.smartModel,
     registry: deps.registry,
     reasoning: deps.config.smartReasoning,

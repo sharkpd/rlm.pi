@@ -2,10 +2,10 @@
 
 import type { NodeKind, NodeStatus } from "../state/agent-tree.ts";
 
-export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+export const SPINNER = Object.freeze(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]);
 
 export function spinnerFrame(): string {
-  return SPINNER[Math.floor(Date.now() / 100) % SPINNER.length]!;
+  return SPINNER[Math.floor(Date.now() / 100) % SPINNER.length] ?? "⠋";
 }
 
 /** Glyph for a node's status. */
@@ -24,6 +24,8 @@ export function kindLabel(kind: NodeKind): string {
       return "rlm_query";
     case "batch":
       return "llm_query×";
+    case "tool":
+      return "tool";
     default:
       return "llm_query";
   }

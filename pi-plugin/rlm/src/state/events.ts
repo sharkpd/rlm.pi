@@ -13,11 +13,12 @@ export interface SubcallStart {
   model?: string;
   label: string;
   detail?: string;
+  args?: string;
 }
 
 export interface SubcallObserver {
   start(info: SubcallStart): string;
-  end(id: string, opts?: { error?: string; costUsd?: number; tokens?: number }): void;
+  end(id: string, opts?: { error?: string; costUsd?: number; tokens?: number; resultPreview?: string }): void;
   /** Account usage to an existing node (e.g. a root turn). */
   usage(id: string, costUsd: number, tokens: number): void;
   /** Update a node's one-line detail (e.g. "turn 3/30"). */
@@ -41,10 +42,12 @@ export function treeObserver(tree: AgentTree): SubcallObserver {
         label: info.label,
         model: info.model,
         detail: info.detail,
+        args: info.args,
       }),
     end: (id, opts) => {
       if (!id) return;
       if (opts?.costUsd || opts?.tokens) tree.addUsage(id, opts.costUsd ?? 0, opts.tokens ?? 0);
+      if (opts?.resultPreview) tree.setResult(id, opts.resultPreview);
       tree.end(id, opts?.error ? "error" : "done", opts?.error);
     },
     usage: (id, costUsd, tokens) => {

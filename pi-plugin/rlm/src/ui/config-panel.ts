@@ -1,39 +1,58 @@
-/**
- * Config panel TUI — toggle RLM run parameters (depth, iterations, timeout, concurrency,
- * orchestrator) via pi's `SettingsList`. Mutates the live RlmConfig in place.
- */
+/** Config panel TUI — toggle RLM run parameters with descriptions. */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import type { RlmConfig } from "../core/types.ts";
 
-const CHOICES = {
-  maxDepth: ["1", "2", "3", "4"],
-  maxIterations: ["10", "20", "30", "50"],
-  execTimeoutS: ["30", "60", "120", "300"],
-  maxConcurrentSubcalls: ["2", "4", "8", "16"],
-  maxBudgetUsd: ["none", "0.50", "1", "5"],
-  maxTimeoutMs: ["none", "60", "120", "300"],
-  maxTokens: ["none", "10000", "50000", "100000"],
-  maxErrors: ["3", "5", "10", "none"],
-  orchestrator: ["on", "off"],
-  compaction: ["on", "off"],
-};
+const CHOICES = Object.freeze({
+  maxDepth: Object.freeze(["1", "2", "3", "4"]),
+  maxIterations: Object.freeze(["10", "20", "30", "50"]),
+  execTimeoutS: Object.freeze(["30", "60", "120", "300"]),
+  maxConcurrentSubcalls: Object.freeze(["2", "4", "8", "16"]),
+  maxBudgetUsd: Object.freeze(["none", "0.50", "1", "5"]),
+  maxTimeoutMs: Object.freeze(["none", "60", "120", "300"]),
+  maxTokens: Object.freeze(["none", "10000", "50000", "100000"]),
+  maxErrors: Object.freeze(["3", "5", "10", "none"]),
+  orchestrator: Object.freeze(["on", "off"]),
+  compaction: Object.freeze(["on", "off"]),
+  maxReadMb: Object.freeze(["1", "10", "25", "100"]),
+  maxOutputChars: Object.freeze(["5000", "20000", "50000", "100000"]),
+  maxFindFiles: Object.freeze(["500", "2000", "5000", "10000"]),
+  maxManifestFiles: Object.freeze(["1000", "5000", "10000", "20000"]),
+  commandTimeoutMs: Object.freeze(["5000", "15000", "30000", "60000"]),
+  grepDefaultMaxMatches: Object.freeze(["50", "200", "500", "1000"]),
+  grepMaxMatchesCeiling: Object.freeze(["200", "1000", "2500", "5000"]),
+  sandboxInitTimeoutMs: Object.freeze(["10000", "30000", "60000", "120000"]),
+  allowReadOutsideWorkspace: Object.freeze(["off", "on"]),
+});
+
+function item(id: string, label: string, currentValue: string, values: readonly string[], description: string): SettingItem {
+  return { id, label, currentValue, values: [...values], description };
+}
 
 export async function showConfigPanel(ctx: ExtensionContext, config: RlmConfig): Promise<void> {
   if (ctx.mode !== "tui") return;
   const items: SettingItem[] = [
-    { id: "maxDepth", label: "Max recursion depth", currentValue: String(config.maxDepth), values: CHOICES.maxDepth },
-    { id: "maxIterations", label: "Max iterations", currentValue: String(config.maxIterations), values: CHOICES.maxIterations },
-    { id: "execTimeoutS", label: "REPL block timeout (s)", currentValue: String(config.execTimeoutS), values: CHOICES.execTimeoutS },
-    { id: "maxConcurrentSubcalls", label: "Max concurrent sub-calls", currentValue: String(config.maxConcurrentSubcalls), values: CHOICES.maxConcurrentSubcalls },
-    { id: "maxBudgetUsd", label: "Budget ceiling (USD)", currentValue: config.maxBudgetUsd != null ? String(config.maxBudgetUsd) : "none", values: CHOICES.maxBudgetUsd },
-    { id: "maxTimeoutMs", label: "Wall-clock ceiling (min)", currentValue: config.maxTimeoutMs != null ? String(Math.round(config.maxTimeoutMs / 60_000)) : "none", values: CHOICES.maxTimeoutMs },
-    { id: "maxTokens", label: "Token ceiling", currentValue: config.maxTokens != null ? String(config.maxTokens) : "none", values: CHOICES.maxTokens },
-    { id: "maxErrors", label: "Max consecutive errors", currentValue: config.maxErrors != null ? String(config.maxErrors) : "none", values: CHOICES.maxErrors },
-    { id: "orchestrator", label: "Orchestrator addendum", currentValue: config.orchestrator ? "on" : "off", values: CHOICES.orchestrator },
-    { id: "compaction", label: "Trajectory compaction", currentValue: config.compaction ? "on" : "off", values: CHOICES.compaction },
+    item("maxDepth", "Max recursion depth", String(config.maxDepth), CHOICES.maxDepth, "rlm_query past this depth degrades to plain llm_query (1 = no recursion)."),
+    item("maxIterations", "Max iterations", String(config.maxIterations), CHOICES.maxIterations, "Maximum root REPL turns before RLM asks the model for a final answer."),
+    item("execTimeoutS", "REPL block timeout (s)", String(config.execTimeoutS), CHOICES.execTimeoutS, "Wall-clock limit for one model-authored Python REPL block."),
+    item("maxConcurrentSubcalls", "Max concurrent sub-calls", String(config.maxConcurrentSubcalls), CHOICES.maxConcurrentSubcalls, "Concurrency pool size for llm_query_batched and rlm_query_batched."),
+    item("maxBudgetUsd", "Budget ceiling (USD)", config.maxBudgetUsd != null ? String(config.maxBudgetUsd) : "none", CHOICES.maxBudgetUsd, "Total spend cap for the whole recursive tree; none disables the cap."),
+    item("maxTimeoutMs", "Wall-clock ceiling (min)", config.maxTimeoutMs != null ? String(Math.round(config.maxTimeoutMs / 60_000)) : "none", CHOICES.maxTimeoutMs, "Total runtime cap for the whole recursive tree; none disables the cap."),
+    item("maxTokens", "Token ceiling", config.maxTokens != null ? String(config.maxTokens) : "none", CHOICES.maxTokens, "Total input+output token cap for the whole recursive tree."),
+    item("maxErrors", "Max consecutive errors", config.maxErrors != null ? String(config.maxErrors) : "none", CHOICES.maxErrors, "Stop after this many consecutive failing turns; none disables the guard."),
+    item("orchestrator", "Orchestrator addendum", config.orchestrator ? "on" : "off", CHOICES.orchestrator, "Append extra divide-and-conquer guidance to the smart model system prompt."),
+    item("compaction", "Trajectory compaction", config.compaction ? "on" : "off", CHOICES.compaction, "Summarize old turns when history approaches the model context window."),
+    item("maxReadMb", "[Limits] Max file read (MB)", String(Math.round(config.fsLimits.maxReadBytes / (1024 * 1024))), CHOICES.maxReadMb, "Maximum file size read_file will load."),
+    item("maxOutputChars", "Max tool output (chars)", String(config.fsLimits.maxOutputChars), CHOICES.maxOutputChars, "Maximum returned characters from grep and ranged read_file slices before truncation."),
+    item("maxFindFiles", "Max find files", String(config.fsLimits.maxFindFiles), CHOICES.maxFindFiles, "Maximum number of find() results returned to the model."),
+    item("maxManifestFiles", "Max project-map files", String(config.fsLimits.maxManifestFiles), CHOICES.maxManifestFiles, "Maximum files listed when building the initial project map."),
+    item("commandTimeoutMs", "Command timeout (ms)", String(config.fsLimits.commandTimeoutMs), CHOICES.commandTimeoutMs, "Timeout for grep/git subprocesses used by filesystem tools."),
+    item("grepDefaultMaxMatches", "Grep default matches", String(config.fsLimits.grepDefaultMaxMatches), CHOICES.grepDefaultMaxMatches, "Default grep result cap when the model does not pass maxMatches."),
+    item("grepMaxMatchesCeiling", "Grep hard max matches", String(config.fsLimits.grepMaxMatchesCeiling), CHOICES.grepMaxMatchesCeiling, "Maximum grep result cap even if the model requests more."),
+    item("sandboxInitTimeoutMs", "Sandbox init timeout", String(config.sandboxInitTimeoutMs), CHOICES.sandboxInitTimeoutMs, "How long to wait for the Python worker to start."),
+    item("allowReadOutsideWorkspace", "[Security] Read outside workspace", config.allowReadOutsideWorkspace ? "on" : "off", CHOICES.allowReadOutsideWorkspace, "UNSAFE: lets read_file/grep/find escape the project root."),
   ];
 
   await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
@@ -58,35 +77,24 @@ export async function showConfigPanel(ctx: ExtensionContext, config: RlmConfig):
 
 function applySetting(config: RlmConfig, id: string, value: string): void {
   switch (id) {
-    case "maxDepth":
-      config.maxDepth = Number(value);
-      break;
-    case "maxIterations":
-      config.maxIterations = Number(value);
-      break;
-    case "execTimeoutS":
-      config.execTimeoutS = Number(value);
-      break;
-    case "maxConcurrentSubcalls":
-      config.maxConcurrentSubcalls = Number(value);
-      break;
-    case "maxBudgetUsd":
-      config.maxBudgetUsd = value === "none" ? undefined : Number(value);
-      break;
-    case "maxTimeoutMs":
-      config.maxTimeoutMs = value === "none" ? undefined : Number(value) * 60_000;
-      break;
-    case "maxTokens":
-      config.maxTokens = value === "none" ? undefined : Number(value);
-      break;
-    case "maxErrors":
-      config.maxErrors = value === "none" ? undefined : Number(value);
-      break;
-    case "orchestrator":
-      config.orchestrator = value === "on";
-      break;
-    case "compaction":
-      config.compaction = value === "on";
-      break;
+    case "maxDepth": config.maxDepth = Number(value); break;
+    case "maxIterations": config.maxIterations = Number(value); break;
+    case "execTimeoutS": config.execTimeoutS = Number(value); break;
+    case "maxConcurrentSubcalls": config.maxConcurrentSubcalls = Number(value); break;
+    case "maxBudgetUsd": config.maxBudgetUsd = value === "none" ? undefined : Number(value); break;
+    case "maxTimeoutMs": config.maxTimeoutMs = value === "none" ? undefined : Number(value) * 60_000; break;
+    case "maxTokens": config.maxTokens = value === "none" ? undefined : Number(value); break;
+    case "maxErrors": config.maxErrors = value === "none" ? undefined : Number(value); break;
+    case "orchestrator": config.orchestrator = value === "on"; break;
+    case "compaction": config.compaction = value === "on"; break;
+    case "maxReadMb": config.fsLimits.maxReadBytes = Number(value) * 1024 * 1024; break;
+    case "maxOutputChars": config.fsLimits.maxOutputChars = Number(value); break;
+    case "maxFindFiles": config.fsLimits.maxFindFiles = Number(value); break;
+    case "maxManifestFiles": config.fsLimits.maxManifestFiles = Number(value); break;
+    case "commandTimeoutMs": config.fsLimits.commandTimeoutMs = Number(value); break;
+    case "grepDefaultMaxMatches": config.fsLimits.grepDefaultMaxMatches = Number(value); break;
+    case "grepMaxMatchesCeiling": config.fsLimits.grepMaxMatchesCeiling = Number(value); break;
+    case "sandboxInitTimeoutMs": config.sandboxInitTimeoutMs = Number(value); break;
+    case "allowReadOutsideWorkspace": config.allowReadOutsideWorkspace = value === "on"; break;
   }
 }

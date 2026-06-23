@@ -10,12 +10,9 @@ export const RLM_GUIDE = `# RLM mode
 
 ## Commands
 
-- \`/rlm\` — toggle RLM mode (shortcut: Ctrl+Shift+R)
-- \`/rlm <q>\` — ask a one-shot RLM question
-- \`/rlm --file <path> <q>\` — include large file context
-- \`/rlm --paste <q>\` — paste context for a question
+- \`/rlm\` — toggle RLM mode (shortcut: Ctrl+Shift+R). Turning it OFF also stops a running query.
 - \`/rlm-config\` — choose models, reasoning, and budget limits
-- \`/rlm-stop\` — stop the active RLM run
+- \`/rlm-stop\` — cancel the current run but stay in RLM mode (use /rlm or Ctrl+Shift+R to leave)
 - \`/rlm-help\` — show this guide again
 
 When RLM mode is ON, plain messages route to RLM. The footer/status line shows the current state.`;

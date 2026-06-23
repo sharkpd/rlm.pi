@@ -48,6 +48,8 @@ export interface SandboxOptions {
   signal?: AbortSignal;
   /** Workspace root for host-side filesystem tools. Enforcement happens in the handlers. */
   workspaceRoot?: string;
+  /** Worker startup wait before init failure (ms). */
+  initTimeoutMs?: number;
 }
 
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "worker.py");
@@ -80,6 +82,7 @@ interface Pending {
   resolve(res: WorkerResponse): void;
   reject(err: Error): void;
   timer: ReturnType<typeof setTimeout>;
+  requestType: string;
 }
 
 export class PythonSandbox {
@@ -90,6 +93,7 @@ export class PythonSandbox {
   private readonly pending = new Map<string, Pending>();
   private readonly handlers: SubLlmHandlers;
   private readonly requestTimeoutMs: number;
+  private readonly initTimeoutMs: number;
   private stderr = "";
   private disposed = false;
   private ready: Promise<void>;
@@ -97,6 +101,7 @@ export class PythonSandbox {
   private constructor(opts: SandboxOptions) {
     this.handlers = { ...REJECT, ...opts.handlers };
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 20 * 60_000;
+    this.initTimeoutMs = opts.initTimeoutMs ?? 30_000;
     const python = opts.python ?? "python3";
     this.proc = spawn(
       python,
@@ -175,8 +180,9 @@ export class PythonSandbox {
       stdout: res.stdout ?? "",
       stderr: res.stderr ?? "",
       finalAnswer: res.final_answer ?? null,
+      answerContent: res.answer_content ?? "",
+      raised: res.raised ?? false,
       executionTimeMs: Math.round((res.execution_time ?? 0) * 1000),
-      localsKeys: res.locals_keys ?? [],
     };
   }
 
@@ -197,7 +203,7 @@ export class PythonSandbox {
 
   private waitForInit(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("worker did not start in time")), 30_000);
+      const timer = setTimeout(() => reject(new Error("worker did not start in time")), this.initTimeoutMs);
       this.pending.set("_init", {
         resolve: (res) => {
           clearTimeout(timer);
@@ -205,6 +211,7 @@ export class PythonSandbox {
         },
         reject,
         timer,
+        requestType: "init",
       });
     });
   }
@@ -213,14 +220,26 @@ export class PythonSandbox {
     if (this.disposed) return Promise.reject(new Error("sandbox disposed"));
     const id = `r${++this.seq}`;
     return new Promise<WorkerResponse>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        this.proc.kill("SIGKILL");
-        reject(new Error(`request '${payload.type}' exceeded watchdog (${this.requestTimeoutMs}ms); worker killed`));
-      }, this.requestTimeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      const timer = this.createWatchdog(id, payload.type, reject);
+      this.pending.set(id, { resolve, reject, timer, requestType: payload.type });
       this.send({ id, ...payload } as ParentMessage);
     });
+  }
+
+  private createWatchdog(id: string, requestType: string, reject: (err: Error) => void): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      this.pending.delete(id);
+      this.proc.kill("SIGKILL");
+      reject(new Error(`request '${requestType}' exceeded ${this.requestTimeoutMs}ms with no progress; worker killed`));
+    }, this.requestTimeoutMs);
+  }
+
+  private touchPending(): void {
+    for (const [id, p] of this.pending) {
+      if (id === "_init") continue;
+      clearTimeout(p.timer);
+      p.timer = this.createWatchdog(id, p.requestType, p.reject);
+    }
   }
 
   private send(msg: ParentMessage): void {
@@ -252,6 +271,7 @@ export class PythonSandbox {
 
   private dispatch(msg: WorkerMessage): void {
     if (isInterrupt(msg)) {
+      this.touchPending();
       void this.serviceInterrupt(msg);
       return;
     }

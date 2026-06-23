@@ -8,7 +8,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepareRlmContext } from "../src/mode/rlm-mode.ts";
+import { prepareRlmContext, RlmController } from "../src/mode/rlm-mode.ts";
+import { DEFAULT_CONFIG } from "../src/config/defaults.ts";
+import { loadSettings, mergeConfig, saveSettings } from "../src/config/settings.ts";
+import { turnHadError } from "../src/core/answer.ts";
 import { PythonSandbox } from "../src/sandbox/sandbox.ts";
 import { findReplBlocks, truncateOutput } from "../src/text/parsing.ts";
 
@@ -47,6 +50,13 @@ async function main() {
   await sandbox.exec("acc = []");
   r = await sandbox.exec("acc.append('x'); print(len(acc))");
   check("vars persist across exec calls", r.stdout.trim() === "1", r.stdout.trim());
+  await sandbox.exec("def f():\n    return x");
+  await sandbox.exec("x = 5");
+  r = await sandbox.exec("print(f())");
+  check("functions see variables created in later cells", r.stdout.trim() === "5", r.stdout.trim());
+  await sandbox.exec("llm_query = 'clobbered'");
+  r = await sandbox.exec("print(llm_query('still works'))");
+  check("tools are restored after clobber", r.stdout.includes("STUB(still works"), r.stdout.trim());
 
   // SHOW_VARS
   r = await sandbox.exec("print(SHOW_VARS())");
@@ -108,8 +118,12 @@ async function main() {
   const sliceRoot = await mkdtemp(join(tmpdir(), "rlm-slice-"));
   try {
     await writeFile(join(sliceRoot, "big.txt"), Array.from({ length: 30_000 }, (_, i) => `line ${i}`).join("\n"));
+    const fullOut = await createFsBridge(sliceRoot).readFile("big.txt", null, null);
+    check("read_file whole-file reads are not output-capped", fullOut.length > 20_000 && !fullOut.includes("truncated to 20000 characters"), fullOut.slice(-80));
     const sliceOut = await createFsBridge(sliceRoot).readFile("big.txt", 1, 30_000);
     check("read_file slices are preview-capped", sliceOut.includes("truncated to 20000 characters"), sliceOut.slice(-80));
+    const limitedOut = await createFsBridge(sliceRoot, { limits: { ...DEFAULT_CONFIG.fsLimits, maxOutputChars: 40 } }).readFile("big.txt", 1, 30_000);
+    check("read_file honors configured output limit", limitedOut.includes("truncated to 40 characters"), limitedOut.slice(-80));
   } finally {
     await rm(sliceRoot, { recursive: true, force: true });
   }
@@ -132,6 +146,9 @@ async function main() {
     });
     r = await evilSb.exec("print(read_file('evil/secret.txt'))");
     check("read_file rejects symlink workspace escape", r.stdout.includes("outside the workspace root"), r.stdout.trim());
+    const unsafeFs = createFsBridge(inside, { allowReadOutsideWorkspace: true });
+    const unsafeOut = await unsafeFs.readFile("evil/secret.txt", null, null);
+    check("read_file can allow workspace escape when configured", unsafeOut.trim() === "SECRET", unsafeOut.trim());
     await evilSb.dispose();
   } finally {
     await rm(inside, { recursive: true, force: true });
@@ -145,12 +162,16 @@ async function main() {
   check("explicit context is not replaced by manifest", explicitContext === "explicit", String(explicitContext));
 
   // answer.ready -> final answer surfaced
+  r = await sandbox.exec("answer['content'] = 'draft partial'");
+  check("answer content is exposed before ready", r.answerContent === "draft partial", r.answerContent);
   r = await sandbox.exec("answer['content'] = '42'; answer['ready'] = True");
   check("answer.ready surfaces final answer", r.finalAnswer === "42", String(r.finalAnswer));
 
   // stderr on error
+  r = await sandbox.exec("import sys; print('progress warning', file=sys.stderr)");
+  check("plain stderr is not a raised error", r.stderr.includes("progress warning") && !turnHadError([r]), r.stderr.trim());
   r = await sandbox.exec("1/0");
-  check("error captured in stderr", r.stderr.includes("ZeroDivisionError"), r.stderr.trim().slice(0, 60));
+  check("error captured in stderr", r.stderr.includes("ZeroDivisionError") && turnHadError([r]), r.stderr.trim().slice(0, 60));
 
   // per-block timeout -> watchdog/SIGALRM kills the block (not the whole process)
   r = await sandbox.exec("while True:\n    pass");
@@ -187,6 +208,26 @@ async function main() {
   check("H3: local CPU loop still bounded by exec timeout", r.stderr.includes("timeout"), r.stderr.trim().slice(0, 80));
   await slow.dispose();
 
+  const progressSb = await PythonSandbox.spawn({
+    depth: 1,
+    execTimeoutS: 0,
+    requestTimeoutMs: 500,
+    handlers: { llmQuery: async (prompt) => { await sleep(300); return `OK ${prompt}`; } },
+  });
+  r = await progressSb.exec("print(llm_query('a')); print(llm_query('b')); print(llm_query('c'))");
+  check("request watchdog resets on sub-call progress", r.stdout.includes("OK a") && r.stdout.includes("OK c"), r.stderr.trim());
+  await progressSb.dispose();
+
+  const silentSb = await PythonSandbox.spawn({ depth: 1, execTimeoutS: 0, requestTimeoutMs: 100 });
+  try {
+    await silentSb.exec("import time; time.sleep(1)");
+    check("request watchdog kills silent block", false);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    check("request watchdog kills silent block", message.includes("no progress"), message);
+  }
+  await silentSb.dispose();
+
   // H4: a large (≥5MB) context loads via temp file instead of one giant JSONL line.
   const big = "x".repeat(5 * 1024 * 1024);
   const bigSb = await PythonSandbox.spawn({ depth: 1 });
@@ -203,6 +244,39 @@ async function main() {
   );
   check("R2: non-JSON fd-1 write does not crash the pump", r.stdout.trim() === "hello", r.stderr.trim().slice(0, 80));
   await dirtySb.dispose();
+
+  // Settings round-trip covers persisted model refs, reasoning, security, and limits.
+  {
+    const previous = loadSettings();
+    const config = mergeConfig({
+      ...DEFAULT_CONFIG,
+      smartReasoning: "high",
+      subSampling: { ...DEFAULT_CONFIG.subSampling, reasoning: "low" },
+      fsLimits: { ...DEFAULT_CONFIG.fsLimits, maxOutputChars: 1234 },
+      allowReadOutsideWorkspace: true,
+    });
+    const saved = saveSettings({ config, smart: "test/smart", worker: "test/worker" });
+    const loaded = loadSettings();
+    const roundTrip = mergeConfig(loaded.config);
+    check("settings save reports success", saved);
+    check("settings round-trips model refs", loaded.smart === "test/smart" && loaded.worker === "test/worker");
+    check("settings round-trips reasoning", roundTrip.smartReasoning === "high" && roundTrip.subSampling.reasoning === "low");
+    check("settings round-trips fs/security knobs", roundTrip.fsLimits.maxOutputChars === 1234 && roundTrip.allowReadOutsideWorkspace);
+    saveSettings(previous);
+  }
+
+  // --- Controller toggle() unit test: turning OFF aborts an active run ---
+  {
+    const cfg = { ...DEFAULT_CONFIG, enabled: true };
+    const ctrl = new RlmController(cfg);
+    const fakeAbort = new AbortController();
+    Object.defineProperty(ctrl, "active", { value: fakeAbort, writable: true });
+    check("controller is busy after inject", ctrl.isBusy());
+    const result = ctrl.toggle();        // toggles OFF → should abort
+    check("toggle() returns false (OFF)", result === false);
+    check("toggle() OFF aborted the run", fakeAbort.signal.aborted);
+    check("controller disabled after toggle()", ctrl.enabled === false);
+  }
 
   await sandbox.dispose();
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

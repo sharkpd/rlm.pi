@@ -2,7 +2,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { modelRef } from "../config/settings.ts";
-import type { RlmController } from "../mode/rlm-mode.ts";
+import { cheapestModel, type RlmController } from "../mode/rlm-mode.ts";
 import { setRlmModeStatus } from "../ui/status.ts";
 import { showConfigPanel } from "../ui/config-panel.ts";
 import { selectModel } from "../ui/model-picker.ts";
@@ -28,9 +28,12 @@ export async function runRlmConfig(pi: ExtensionAPI, controller: RlmController, 
 
   await showConfigPanel(ctx, controller.config);
 
-  controller.savedSmartRef = modelRef(controller.smartModel);
-  controller.savedWorkerRef = modelRef(controller.workerModel);
-  controller.persist();
+  const effectiveSmart = controller.smartModel ?? ctx.model;
+  const effectiveWorker = controller.workerModel ?? cheapestModel(ctx.modelRegistry);
+  controller.savedSmartRef = modelRef(controller.smartModel) ?? modelRef(effectiveSmart);
+  controller.savedWorkerRef = modelRef(controller.workerModel) ?? modelRef(effectiveWorker);
+  const persisted = controller.persist();
+  if (!persisted) ctx.ui.notify("RLM: failed to save settings to ~/.pi/agent/rlm.json", "error");
   setRlmModeStatus(ctx.ui, controller);
 
   const s = controller.smartModel ?? ctx.model;

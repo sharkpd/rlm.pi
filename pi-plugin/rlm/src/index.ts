@@ -17,7 +17,7 @@ export default function rlmExtension(pi: ExtensionAPI): void {
   controller.savedSmartRef = persisted.smart;
   controller.savedWorkerRef = persisted.worker;
 
-  pi.registerMessageRenderer<{ iterations: number; costUsd: number }>(
+  pi.registerMessageRenderer(
     "rlm-answer",
     (message, _options, _theme) => new Markdown(String(message.content ?? ""), 1, 0, getMarkdownTheme()),
   );
@@ -31,9 +31,13 @@ export default function rlmExtension(pi: ExtensionAPI): void {
   registerRlmCommand(pi, controller);
   registerRlmConfigCommand(pi, controller);
 
+  let guidePosted = false;
   pi.on("session_start", async (_event, ctx) => {
     setRlmModeStatus(ctx.ui, controller);
-    postRlmGuide(pi, controller);
+    if (!guidePosted && controller.enabled) {
+      guidePosted = true;
+      postRlmGuide(pi, controller);
+    }
   });
 
   pi.on("context", async (event) => ({

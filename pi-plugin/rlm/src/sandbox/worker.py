@@ -94,55 +94,45 @@ class Worker:
         self._rid = 0
         self._final_answer: str | None = None
         self._context_count = 0
-        self.globals: dict[str, Any] = {}
-        self.locals: dict[str, Any] = {}
+        self.ns: dict[str, Any] = {}
         self._setup()
 
     def _setup(self) -> None:
-        self.globals = {"__builtins__": _SAFE_BUILTINS.copy(), "__name__": "__main__"}
-        self.locals = {}
-        self.globals["llm_query"] = self._llm_query
-        self.globals["llm_query_batched"] = self._llm_query_batched
-        self.globals["rlm_query"] = self._rlm_query
-        self.globals["rlm_query_batched"] = self._rlm_query_batched
-        self.globals["read_file"] = self._read_file
-        self.globals["grep"] = self._grep
-        self.globals["find"] = self._find
-        self.globals["SHOW_VARS"] = self._show_vars
-        self.locals["answer"] = _AnswerDict(self._capture_answer)
+        self.ns = {"__builtins__": _SAFE_BUILTINS.copy(), "__name__": "__main__"}
+        self._restore_scaffold()
 
     def _capture_answer(self, content: Any) -> None:
         self._final_answer = str(content)
 
     def _restore_scaffold(self) -> None:
         # Re-inject any scaffolding the user code clobbered.
-        g = self.globals
-        g.setdefault("llm_query", self._llm_query)
-        g.setdefault("llm_query_batched", self._llm_query_batched)
-        g.setdefault("rlm_query", self._rlm_query)
-        g.setdefault("rlm_query_batched", self._rlm_query_batched)
-        g.setdefault("read_file", self._read_file)
-        g.setdefault("grep", self._grep)
-        g.setdefault("find", self._find)
-        g.setdefault("SHOW_VARS", self._show_vars)
-        if not isinstance(self.locals.get("answer"), _AnswerDict):
-            cur = self.locals.get("answer")
+        ns = self.ns
+        ns["llm_query"] = self._llm_query
+        ns["llm_query_batched"] = self._llm_query_batched
+        ns["rlm_query"] = self._rlm_query
+        ns["rlm_query_batched"] = self._rlm_query_batched
+        ns["read_file"] = self._read_file
+        ns["grep"] = self._grep
+        ns["find"] = self._find
+        ns["SHOW_VARS"] = self._show_vars
+        if not isinstance(ns.get("answer"), _AnswerDict):
+            cur = ns.get("answer")
             ans = _AnswerDict(self._capture_answer)
             if isinstance(cur, dict):
                 for k, v in cur.items():
                     dict.__setitem__(ans, k, v)
                 if cur.get("ready") and self._final_answer is None:
                     self._final_answer = str(cur.get("content", ""))
-            self.locals["answer"] = ans
+            ns["answer"] = ans
         # Restore the context alias (reference: context = context_0 every cell).
-        if "context_0" in self.locals:
-            self.locals["context"] = self.locals["context_0"]
+        if "context_0" in ns:
+            ns["context"] = ns["context_0"]
 
     def _show_vars(self) -> str:
         avail = {
             k: type(v).__name__
-            for k, v in self.locals.items()
-            if not k.startswith("_") and k not in RESERVED
+            for k, v in self.ns.items()
+            if not k.startswith("_") and not k.startswith("context_") and k not in RESERVED and k != "__builtins__"
         }
         return f"Available variables: {avail}" if avail else "No variables created yet."
 
@@ -223,9 +213,9 @@ class Worker:
             index = self._context_count
         with open(path, "r") as f:
             payload = json.load(f) if is_json else f.read()
-        self.locals[f"context_{index}"] = payload
+        self.ns[f"context_{index}"] = payload
         if index == 0:
-            self.locals["context"] = payload
+            self.ns["context"] = payload
         self._context_count = max(self._context_count, index + 1)
         return index
 
@@ -258,29 +248,28 @@ class Worker:
 
     def execute(self, code: str) -> dict[str, Any]:
         start = time.perf_counter()
+        raised = False
         with self._capture() as (out, err):
             try:
-                ns = {**self.globals, **self.locals}
-                self._exec(code, ns)
-                for k, v in ns.items():
-                    if k not in self.globals and not k.startswith("_"):
-                        self.locals[k] = v
+                self._restore_scaffold()
+                self._exec(code, self.ns)
                 self._restore_scaffold()
                 stdout, stderr = out.getvalue(), err.getvalue()
             except BaseException as e:  # noqa: BLE001
+                raised = True
+                self._restore_scaffold()
                 stdout = out.getvalue()
                 stderr = err.getvalue() + f"\n{type(e).__name__}: {e}\n" + traceback.format_exc()
         final, self._final_answer = self._final_answer, None
-        keys = [
-            k for k, v in self.locals.items()
-            if not k.startswith("_") and isinstance(v, (str, int, float, bool, list, dict, tuple))
-        ]
+        answer = self.ns.get("answer")
+        answer_content = answer.get("content", "") if isinstance(answer, dict) else ""
         return {
             "stdout": stdout,
             "stderr": stderr,
             "final_answer": final,
+            "answer_content": str(answer_content),
+            "raised": raised,
             "execution_time": time.perf_counter() - start,
-            "locals_keys": keys,
         }
 
 

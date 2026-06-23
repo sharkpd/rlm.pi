@@ -1,10 +1,4 @@
-/**
- * Live agent/subagent tree shown above the editor during an RLM run.
- *
- * Renders the AgentTree: the root orchestrator and, nested beneath it, every sub-LLM call and
- * recursive child RLM, each with status, model, cost, tokens, and duration. Re-renders on tree
- * change and ticks a spinner while anything is running.
- */
+/** Live verbose agent/subagent tree shown above the editor during an RLM run. */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
@@ -13,26 +7,37 @@ import { AgentTree, type TreeNode } from "../state/agent-tree.ts";
 import { formatCost, formatDuration, formatTokens, kindLabel, statusGlyph } from "./theme.ts";
 
 type WidgetFactory = (tui: TUI, theme: Theme) => Component & { dispose?(): void };
+type TreeColor = "accent" | "success" | "error" | "muted";
 
-const COLOR: Record<string, "accent" | "success" | "error" | "muted"> = {
+const COLOR: Readonly<Record<TreeNode["kind"], TreeColor>> = Object.freeze({
   root: "accent",
   rlm: "accent",
   batch: "muted",
   llm: "muted",
-};
+  tool: "muted",
+});
 
-function nodeLine(node: TreeNode, theme: Theme, width: number, prefix: string): string {
-  const statusColor = node.status === "error" ? "error" : node.status === "done" ? "success" : "accent";
+function headline(node: TreeNode, theme: Theme): string {
+  const statusColor: TreeColor = node.status === "error" ? "error" : node.status === "done" ? "success" : "accent";
   const glyph = theme.fg(statusColor, statusGlyph(node.status));
-  const label = theme.fg(COLOR[node.kind] ?? "muted", kindLabel(node.kind));
+  const labelText = node.label || kindLabel(node.kind);
+  const label = theme.fg(COLOR[node.kind], labelText);
   const model = node.model ? theme.fg("dim", ` ${node.model}`) : "";
-  const detail = node.detail ? theme.fg("dim", `  ${node.detail}`) : "";
   const stats: string[] = [];
   if (node.costUsd > 0) stats.push(formatCost(node.costUsd));
   if (node.tokens > 0) stats.push(formatTokens(node.tokens));
   stats.push(formatDuration((node.endedAt ?? Date.now()) - node.startedAt));
-  const statsStr = theme.fg("muted", `  ${stats.join(" · ")}`);
-  return truncateToWidth(`${prefix}${glyph} ${label}${model}${detail}${statsStr}`, width);
+  return `${glyph} ${label}${model}${theme.fg("muted", `  ${stats.join(" · ")}`)}`;
+}
+
+function nodeLines(node: TreeNode, theme: Theme, width: number, prefix: string, childIndent: string): string[] {
+  const lines: string[] = [truncateToWidth(`${prefix}${headline(node, theme)}`, width)];
+  const nodeDetail = node.kind === "root" && node.detail?.startsWith("turn ") ? undefined : node.detail;
+  const detail = node.args ?? nodeDetail;
+  if (detail) lines.push(truncateToWidth(`${childIndent}  ${theme.fg("dim", detail)}`, width));
+  if (node.status === "error" && node.detail) lines.push(truncateToWidth(`${childIndent}  ${theme.fg("error", `✗ ${node.detail}`)}`, width));
+  else if (node.resultPreview) lines.push(truncateToWidth(`${childIndent}  ${theme.fg("muted", `→ ${node.resultPreview}`)}`, width));
+  return lines;
 }
 
 function renderSubtree(tree: AgentTree, parentId: string | undefined, theme: Theme, width: number, indent: string, lines: string[]): void {
@@ -40,8 +45,8 @@ function renderSubtree(tree: AgentTree, parentId: string | undefined, theme: The
   kids.forEach((node, i) => {
     const last = i === kids.length - 1;
     const branch = parentId === undefined ? "" : last ? "└─ " : "├─ ";
-    lines.push(nodeLine(node, theme, width, indent + branch));
     const childIndent = parentId === undefined ? "" : indent + (last ? "   " : "│  ");
+    lines.push(...nodeLines(node, theme, width, indent + branch, childIndent));
     renderSubtree(tree, node.id, theme, width, childIndent, lines);
   });
 }
@@ -52,10 +57,9 @@ export function renderTree(tree: AgentTree, theme: Theme, width: number): string
   renderSubtree(tree, undefined, theme, width, "", lines);
   if (lines.length === 0) return [];
   const t = tree.totals();
-  const header = theme.fg(
-    "accent",
-    theme.bold(`RLM · ${formatCost(t.costUsd)} · ${formatTokens(t.tokens)} tok · ${t.running} active`),
-  );
+  const turn = tree.rootDetail();
+  const headerText = `RLM · ${formatCost(t.costUsd)} · ${formatTokens(t.tokens)} tok · ${t.running} active${turn ? ` · ${turn}` : ""}`;
+  const header = theme.fg("accent", theme.bold(headerText));
   return [truncateToWidth(header, width), ...lines];
 }
 
@@ -77,7 +81,6 @@ export function createTreeWidget(tree: AgentTree): WidgetFactory {
   return (tui, theme) => {
     const widget = new TreeWidget(tree, theme);
     const unsub = tree.onChange(() => tui.requestRender());
-    // Keep the spinner animating while anything is running.
     const timer = setInterval(() => {
       if (tree.totals().running > 0) tui.requestRender();
     }, 120);

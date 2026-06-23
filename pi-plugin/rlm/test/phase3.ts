@@ -1,12 +1,11 @@
 /**
- * Phase 3/5 verification — load the extension and drive the engine-driven `/rlm` command.
+ * Phase 3/5 verification — load the extension and drive persistent `/rlm` mode.
  *
  *   bun run pi-plugin/rlm/test/phase3.ts                 # load + wiring check (no tokens)
  *   RLM_TEST_LIVE=1 bun run pi-plugin/rlm/test/phase3.ts # real end-to-end /rlm run
  */
 
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   AuthStorage,
@@ -70,14 +69,18 @@ async function main() {
   }
   console.log(`model: ${model.provider}/${model.id}`);
 
-  const ctxFile = join(tmpdir(), `rlm-ctx-${Date.now()}.txt`);
+  const ctxDir = join(process.cwd(), ".tmp-rlm-test");
+  mkdirSync(ctxDir, { recursive: true });
+  const ctxFile = join(ctxDir, `rlm-ctx-${Date.now()}.txt`);
   writeFileSync(
     ctxFile,
     "Field notes. The mayor of Veridia is Lena Cole. Veridia's official tree is the silver birch. " +
       "Population at last census: 48,213. The festival of lanterns happens every autumn.",
   );
 
-  await session.prompt(`/rlm --file ${ctxFile} According to the notes, what is Veridia's official tree? Answer with two words.`);
+  await session.prompt("/rlm");
+  await session.agent.waitForIdle();
+  await session.prompt(`Use read_file('${ctxFile}') and answer: what is Veridia's official tree? Answer with two words.`);
   await session.agent.waitForIdle();
 
   // The engine posts the answer as a custom "rlm-answer" message.

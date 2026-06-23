@@ -9,9 +9,18 @@ export function finalAnswerOf(results: ReplResult[]): string | null {
   return null;
 }
 
-/** True if any block in the turn raised an error (stderr present). */
+/** Last non-empty answer content set by the REPL, even if answer.ready was not flipped. */
+export function latestAnswerContentOf(results: ReplResult[]): string | null {
+  for (let i = results.length - 1; i >= 0; i--) {
+    const content = results[i]?.answerContent.trim();
+    if (content) return content;
+  }
+  return null;
+}
+
+/** True if any block in the turn raised an exception. Plain stderr does not count. */
 export function turnHadError(results: ReplResult[]): boolean {
-  return results.some((r) => r.stderr.trim().length > 0);
+  return results.some((r) => r.raised);
 }
 
 /** The REPL output fed back to the model as the next user message. */

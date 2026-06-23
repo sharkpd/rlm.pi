@@ -32,8 +32,9 @@ export interface WorkerResponse {
   stdout?: string;
   stderr?: string;
   final_answer?: string | null;
+  answer_content?: string;
+  raised?: boolean;
   execution_time?: number;
-  locals_keys?: string[];
   // load_context:
   index?: number;
 }
@@ -85,6 +86,7 @@ export interface ReplResult {
   stdout: string;
   stderr: string;
   finalAnswer: string | null;
+  answerContent: string;
+  raised: boolean;
   executionTimeMs: number;
-  localsKeys: string[];
 }

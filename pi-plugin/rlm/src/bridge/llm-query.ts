@@ -77,7 +77,7 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
 
   return {
     async llmQuery(prompt, model) {
-      const id = observer.start({ kind: "llm", depth, parentId: opts.parentId, model: opts.workerModel.id, label: "llm_query", detail: preview(prompt) });
+      const id = observer.start({ kind: "llm", depth, parentId: opts.parentId, model: opts.workerModel.id, label: "llm_query", args: `prompt: ${preview(prompt)}` });
       let cost = 0;
       let tokens = 0;
       const out = await complete1(prompt, model, (u) => {
@@ -89,7 +89,7 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
     },
 
     async llmQueryBatched(prompts, model) {
-      const id = observer.start({ kind: "batch", depth, parentId: opts.parentId, model: opts.workerModel.id, label: `llm_query ×${prompts.length}`, detail: preview(prompts[0] ?? "") });
+      const id = observer.start({ kind: "batch", depth, parentId: opts.parentId, model: opts.workerModel.id, label: `llm_query ×${prompts.length}`, args: `prompt: ${preview(prompts[0] ?? "")}` });
       let cost = 0;
       let tokens = 0;
       const out = await mapPool(prompts, maxConcurrent, (p) =>
@@ -98,7 +98,11 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
           tokens += u.totalTokens;
         }),
       );
-      observer.end(id, { costUsd: cost, tokens });
+      const failed = out.filter((o) => o.startsWith("Error:")).length;
+      const error = failed === out.length && out.length > 0
+        ? `all ${out.length} sub-calls failed`
+        : failed > 0 ? `${failed}/${out.length} sub-calls failed` : undefined;
+      observer.end(id, { costUsd: cost, tokens, error });
       return out;
     },
   };

@@ -9,6 +9,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { buildProjectManifest } from "../bridge/fs-tools.ts";
+import { DEFAULT_CONFIG } from "../config/defaults.ts";
 import { modelRef, resolveModelId, saveSettings } from "../config/settings.ts";
 import { createEngine } from "../core/engine.ts";
 import type { RlmConfig, RlmInput, RlmResult } from "../core/types.ts";
@@ -28,8 +29,8 @@ export interface RunHandle {
   done: Promise<RlmResult>;
 }
 
-export async function prepareRlmContext(context: unknown, cwd: string | undefined, signal?: AbortSignal): Promise<unknown> {
-  return contextLength(context) === 0 && cwd ? buildProjectManifest(cwd, { signal }) : context;
+export async function prepareRlmContext(context: unknown, cwd: string | undefined, config: RlmConfig = DEFAULT_CONFIG, signal?: AbortSignal): Promise<unknown> {
+  return contextLength(context) === 0 && cwd ? buildProjectManifest(cwd, { signal, limits: config.fsLimits }) : context;
 }
 
 function isProjectMapContext(originalContext: unknown, preparedContext: unknown, cwd: string | undefined): boolean {
@@ -55,16 +56,18 @@ export class RlmController {
   }
 
   toggle(): boolean {
-    this.setEnabled(!this.enabled);
-    return this.enabled;
+    const next = !this.enabled;
+    this.setEnabled(next);
+    if (!next) this.abort();   // turning the mode OFF also stops an in-flight run
+    return next;
   }
 
   hasSavedModels(): boolean {
     return Boolean(this.savedSmartRef || this.savedWorkerRef || this.smartModel || this.workerModel);
   }
 
-  persist(): void {
-    saveSettings({
+  persist(): boolean {
+    return saveSettings({
       config: this.config,
       smart: modelRef(this.smartModel) ?? this.savedSmartRef,
       worker: modelRef(this.workerModel) ?? this.savedWorkerRef,
@@ -98,7 +101,7 @@ export class RlmController {
 
     const done = (async () => {
       const workspaceRoot = ctx.cwd;
-      const contextValue = await prepareRlmContext(context, workspaceRoot, abortController.signal);
+      const contextValue = await prepareRlmContext(context, workspaceRoot, this.config, abortController.signal);
       const engine = createEngine({
         smartModel: models.smart,
         workerModel: models.worker,

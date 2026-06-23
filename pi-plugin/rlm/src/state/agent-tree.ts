@@ -6,7 +6,7 @@
  * and bridges mutate the tree; the TUI widget subscribes to `onChange` and re-renders.
  */
 
-export type NodeKind = "root" | "rlm" | "llm" | "batch";
+export type NodeKind = "root" | "rlm" | "llm" | "batch" | "tool";
 export type NodeStatus = "running" | "done" | "error";
 
 export interface TreeNode {
@@ -18,6 +18,8 @@ export interface TreeNode {
   model?: string;
   status: NodeStatus;
   detail?: string;
+  args?: string;
+  resultPreview?: string;
   startedAt: number;
   endedAt?: number;
   costUsd: number;
@@ -31,6 +33,7 @@ export interface NodeInit {
   label: string;
   model?: string;
   detail?: string;
+  args?: string;
 }
 
 export class AgentTree {
@@ -71,6 +74,13 @@ export class AgentTree {
     this.emit();
   }
 
+  setResult(id: string, resultPreview: string): void {
+    const n = this.nodes.get(id);
+    if (!n) return;
+    n.resultPreview = resultPreview;
+    this.emit();
+  }
+
   get(id: string): TreeNode | undefined {
     return this.nodes.get(id);
   }
@@ -78,8 +88,12 @@ export class AgentTree {
   /** Children of `parentId` (or top-level roots when omitted), in creation order. */
   children(parentId?: string): TreeNode[] {
     return this.order
-      .map((id) => this.nodes.get(id)!)
-      .filter((n) => n.parentId === parentId);
+      .map((id) => this.nodes.get(id))
+      .filter((n): n is TreeNode => n !== undefined && n.parentId === parentId);
+  }
+
+  rootDetail(): string | undefined {
+    return this.children(undefined).find((node) => node.kind === "root")?.detail;
   }
 
   /** Rolled-up totals across the whole tree. */

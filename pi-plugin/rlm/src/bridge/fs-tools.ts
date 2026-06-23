@@ -2,14 +2,11 @@ import { execFile, spawn } from "node:child_process";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { DEFAULT_CONFIG } from "../config/defaults.ts";
+import type { FsLimits } from "../core/types.ts";
+import { NOOP_OBSERVER, type SubcallObserver } from "../state/events.ts";
 
 const execFileP = promisify(execFile);
-
-const MAX_READ_BYTES = 10 * 1024 * 1024;
-const MAX_OUT_CHARS = 20_000;
-const MAX_READ_SLICE_CHARS = MAX_OUT_CHARS;
-const MAX_FIND_FILES = 2_000;
-const MAX_MANIFEST_FILES = 5_000;
 
 const WALK_SKIP_NAMES = new Set([
   ".git", ".hg", ".svn", ".DS_Store",
@@ -42,33 +39,41 @@ export interface FsBridgeOptions {
   signal?: AbortSignal;
   commandTimeoutMs?: number;
   initialFiles?: string[];
+  observer?: SubcallObserver;
+  parentId?: string;
+  depth?: number;
+  limits?: FsLimits;
+  allowReadOutsideWorkspace?: boolean;
 }
 
-interface CommandOptions extends FsBridgeOptions {
+interface CommandOptions {
+  signal?: AbortSignal;
   commandTimeoutMs: number;
+  limits: FsLimits;
+  allowReadOutsideWorkspace: boolean;
 }
 
-const DEFAULT_COMMAND_TIMEOUT_MS = 15_000;
-
-function safeResolve(root: string, path: string): string {
+function safeResolve(root: string, path: string, allowOutsideWorkspace: boolean): string {
   const abs = resolve(root, path);
+  if (allowOutsideWorkspace) return abs;
   const rel = relative(root, abs);
   if (rel === "") return abs;
   if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`path '${path}' is outside the workspace root`);
   return abs;
 }
 
-async function safeRealPath(root: string, path: string, rootReal?: string): Promise<string> {
-  const abs = safeResolve(root, path);
-  const realRoot = rootReal ?? await realpath(root);
+async function safeRealPath(root: string, path: string, opts: CommandOptions, rootReal?: string): Promise<string> {
+  const abs = safeResolve(root, path, opts.allowReadOutsideWorkspace);
   const real = await realpath(abs);
+  if (opts.allowReadOutsideWorkspace) return real;
+  const realRoot = rootReal ?? await realpath(root);
   const rel = relative(realRoot, real);
   if (rel === "") return real;
   if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`path '${path}' is outside the workspace root`);
   return real;
 }
 
-function truncateOutput(text: string, limit = MAX_OUT_CHARS): string {
+function truncateOutput(text: string, limit = DEFAULT_CONFIG.fsLimits.maxOutputChars): string {
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}\n…[truncated to ${limit} characters]`;
 }
@@ -78,7 +83,13 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function commandOptions(opts?: FsBridgeOptions): CommandOptions {
-  return { signal: opts?.signal, commandTimeoutMs: opts?.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS };
+  const limits = { ...DEFAULT_CONFIG.fsLimits, ...opts?.limits };
+  return {
+    signal: opts?.signal,
+    commandTimeoutMs: opts?.commandTimeoutMs ?? limits.commandTimeoutMs,
+    limits,
+    allowReadOutsideWorkspace: opts?.allowReadOutsideWorkspace ?? DEFAULT_CONFIG.allowReadOutsideWorkspace,
+  };
 }
 
 function isEnoent(err: unknown): boolean {
@@ -100,7 +111,7 @@ function escapeRegExp(s: string): string {
 export function globToRegExp(glob: string): RegExp {
   let out = "^";
   for (let i = 0; i < glob.length; i++) {
-    const c = glob[i]!;
+    const c = glob[i] ?? "";
     if (c === "*") {
       if (glob[i + 1] === "*") {
         const prev = glob[i - 1];
@@ -211,13 +222,13 @@ async function gitLsFiles(root: string, opts: CommandOptions): Promise<string[]>
     signal: opts.signal,
     timeout: opts.commandTimeoutMs,
   });
-  return stdout.split("\n").filter(Boolean).slice(0, MAX_MANIFEST_FILES);
+  return stdout.split("\n").filter(Boolean).slice(0, opts.limits.maxManifestFiles);
 }
 
-async function walkFiles(root: string, dir = ".", out: string[] = [], limit = MAX_MANIFEST_FILES, opts = commandOptions()): Promise<string[]> {
+async function walkFiles(root: string, dir = ".", out: string[] = [], limit = DEFAULT_CONFIG.fsLimits.maxManifestFiles, opts = commandOptions()): Promise<string[]> {
   throwIfAborted(opts.signal);
   if (out.length >= limit) return out;
-  const abs = safeResolve(root, dir);
+  const abs = safeResolve(root, dir, opts.allowReadOutsideWorkspace);
   const entries = await readdir(abs, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     if (out.length >= limit || shouldSkipWalkEntry(entry.name)) continue;
@@ -228,14 +239,14 @@ async function walkFiles(root: string, dir = ".", out: string[] = [], limit = MA
   return out;
 }
 
-export async function listProjectFiles(root: string, limit = MAX_MANIFEST_FILES, fsOpts?: FsBridgeOptions): Promise<string[]> {
+export async function listProjectFiles(root: string, limit = DEFAULT_CONFIG.fsLimits.maxManifestFiles, fsOpts?: FsBridgeOptions): Promise<string[]> {
   const absRoot = resolve(root);
   const opts = commandOptions(fsOpts);
   const load = async () => {
     try {
       return await gitLsFiles(absRoot, opts);
     } catch {
-      return walkFiles(absRoot, ".", [], MAX_MANIFEST_FILES, opts);
+      return walkFiles(absRoot, ".", [], opts.limits.maxManifestFiles, opts);
     }
   };
   const files = await load();
@@ -243,7 +254,8 @@ export async function listProjectFiles(root: string, limit = MAX_MANIFEST_FILES,
 }
 
 export async function buildProjectManifest(root: string, opts?: FsBridgeOptions): Promise<string> {
-  const files = await listProjectFiles(root, MAX_MANIFEST_FILES, opts);
+  const limits = { ...DEFAULT_CONFIG.fsLimits, ...opts?.limits };
+  const files = await listProjectFiles(root, limits.maxManifestFiles, opts);
   if (files.length === 0) return "";
   return [
     `# Project map (${files.length} files, root: ${root})`,
@@ -252,8 +264,36 @@ export async function buildProjectManifest(root: string, opts?: FsBridgeOptions)
   ].join("\n");
 }
 
+function previewRead(out: string): string {
+  if (out.startsWith("Error:")) return out;
+  if (out.length === 0) return "0 lines · 0 chars";
+  const lines = out.split("\n").length;
+  return `${lines} line${lines === 1 ? "" : "s"} · ${out.length.toLocaleString()} chars`;
+}
+
+function previewGrep(out: string): string {
+  if (out.startsWith("Error:")) return out;
+  if (out === "(no matches)") return "(no matches)";
+  const lines = out.split("\n").filter((line) => line && !line.startsWith("…[truncated")).length;
+  const files = new Set<string>();
+  for (const line of out.split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx > 0) files.add(line.slice(0, idx));
+  }
+  return `${lines} match${lines === 1 ? "" : "es"}${files.size > 0 ? ` in ${files.size} file${files.size === 1 ? "" : "s"}` : ""}`;
+}
+
+function previewFind(out: string): string {
+  if (out.startsWith("Error:")) return out;
+  if (out === "(no files)") return "(no files)";
+  const files = out.split("\n").filter((line) => line && !line.startsWith("…[truncated")).length;
+  return `${files} file${files === 1 ? "" : "s"}`;
+}
+
 export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBridge {
   const opts = commandOptions(fsOpts);
+  const observer = fsOpts.observer ?? NOOP_OBSERVER;
+  const depth = fsOpts.depth ?? 0;
   let rootRealPromise: Promise<string> | undefined;
   let fileListPromise: Promise<string[]> | undefined;
 
@@ -262,70 +302,87 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
     return rootRealPromise;
   };
   const projectFiles = () => {
-    fileListPromise ??= fsOpts.initialFiles ? Promise.resolve(fsOpts.initialFiles) : listProjectFiles(root, MAX_MANIFEST_FILES, opts);
+    fileListPromise ??= fsOpts.initialFiles ? Promise.resolve(fsOpts.initialFiles) : listProjectFiles(root, opts.limits.maxManifestFiles, fsOpts);
     return fileListPromise;
   };
   const formatGrepOutput = ({ lines, truncated }: GrepCommandResult, cap: number) => {
     if (lines.length === 0) return "(no matches)";
     const suffix = truncated ? `\n…[truncated to ${cap} matches]` : "";
-    return truncateOutput(`${lines.slice(0, cap).join("\n")}${suffix}`);
+    return truncateOutput(`${lines.slice(0, cap).join("\n")}${suffix}`, opts.limits.maxOutputChars);
   };
 
   return {
     async readFile(path, start, end) {
+      const args = start != null || end != null ? `${path}:${start ?? ""}-${end ?? ""}` : path;
+      const id = observer.start({ kind: "tool", depth, parentId: fsOpts.parentId, label: "read_file", args });
+      let out: string;
       try {
-        const abs = await safeRealPath(root, path, await rootReal());
+        const abs = await safeRealPath(root, path, opts, await rootReal());
         const st = await stat(abs);
-        if (!st.isFile()) return `Error: '${path}' is not a file`;
-        if (st.size > MAX_READ_BYTES) return `Error: file '${path}' exceeds the ${MAX_READ_BYTES} byte limit`;
-        const text = await readFile(abs, "utf8");
-        if (start == null && end == null) return text;
-        const lines = text.split("\n");
-        const a = Math.max(1, start ?? 1);
-        const b = Math.min(lines.length, end ?? lines.length);
-        if (b < a) return "";
-        return truncateOutput(lines.slice(a - 1, b).join("\n"), MAX_READ_SLICE_CHARS);
+        if (!st.isFile()) out = `Error: '${path}' is not a file`;
+        else if (st.size > opts.limits.maxReadBytes) out = `Error: file '${path}' exceeds the ${opts.limits.maxReadBytes} byte limit`;
+        else {
+          const text = await readFile(abs, "utf8");
+          if (start == null && end == null) out = text;
+          else {
+            const lines = text.split("\n");
+            const a = Math.max(1, start ?? 1);
+            const b = Math.min(lines.length, end ?? lines.length);
+            out = b < a ? "" : truncateOutput(lines.slice(a - 1, b).join("\n"), opts.limits.maxOutputChars);
+          }
+        }
       } catch (e) {
-        if (isEnoent(e)) return `Error: ${missingFileMessage(path)}`;
-        return `Error: ${e instanceof Error ? e.message : String(e)}`;
+        out = isEnoent(e) ? `Error: ${missingFileMessage(path)}` : `Error: ${errorMessage(e)}`;
       }
+      observer.end(id, { error: out.startsWith("Error:") ? out : undefined, resultPreview: previewRead(out) });
+      return out;
     },
 
     async grep(pattern, glob, maxMatches) {
-      const cap = Math.min(Math.max(maxMatches ?? 200, 1), 1000);
+      const cap = Math.min(Math.max(maxMatches ?? opts.limits.grepDefaultMaxMatches, 1), opts.limits.grepMaxMatchesCeiling);
+      const id = observer.start({ kind: "tool", depth, parentId: fsOpts.parentId, label: "grep", args: `"${pattern}" ${glob ?? "**/*"} (max ${cap})` });
+      let out: string;
       try {
         const args = ["--line-number", "--no-heading", "--color=never"];
         if (glob) args.push("--glob", glob);
         args.push("-e", pattern, ".");
         const result = await grepCommand("rg", args, root, cap, opts);
-        return formatGrepOutput(result, cap);
+        out = formatGrepOutput(result, cap);
       } catch (e) {
-        if (!isEnoent(e)) return `Error: grep failed (${errorMessage(e)})`;
-        try {
-          const args = ["grep", "-n", "-I", "-e", pattern];
-          if (glob) args.push("--", `:(glob)${glob}`);
-          const result = await grepCommand("git", args, root, cap, opts);
-          return formatGrepOutput(result, cap);
-        } catch (e2) {
-          return `Error: grep unavailable (${errorMessage(e2)})`;
+        if (!isEnoent(e)) out = `Error: grep failed (${errorMessage(e)})`;
+        else {
+          try {
+            const args = ["grep", "-n", "-I", "-e", pattern];
+            if (glob) args.push("--", `:(glob)${glob}`);
+            const result = await grepCommand("git", args, root, cap, opts);
+            out = formatGrepOutput(result, cap);
+          } catch (e2) {
+            out = `Error: grep unavailable (${errorMessage(e2)})`;
+          }
         }
       }
+      observer.end(id, { error: out.startsWith("Error:") ? out : undefined, resultPreview: previewGrep(out) });
+      return out;
     },
 
     async find(glob) {
+      const id = observer.start({ kind: "tool", depth, parentId: fsOpts.parentId, label: "find", args: glob ?? "**/*" });
+      let out: string;
       try {
         let files = await projectFiles();
         if (glob) {
           const rx = globToRegExp(glob);
           files = files.filter((f) => rx.test(f));
         }
-        const truncated = files.length > MAX_FIND_FILES;
-        const shown = files.slice(0, MAX_FIND_FILES);
-        const suffix = truncated ? `\n…[truncated to ${MAX_FIND_FILES} files]` : "";
-        return shown.length ? `${shown.join("\n")}${suffix}` : "(no files)";
+        const truncated = files.length > opts.limits.maxFindFiles;
+        const shown = files.slice(0, opts.limits.maxFindFiles);
+        const suffix = truncated ? `\n…[truncated to ${opts.limits.maxFindFiles} files]` : "";
+        out = shown.length ? `${shown.join("\n")}${suffix}` : "(no files)";
       } catch (e) {
-        return `Error: ${e instanceof Error ? e.message : String(e)}`;
+        out = `Error: ${errorMessage(e)}`;
       }
+      observer.end(id, { error: out.startsWith("Error:") ? out : undefined, resultPreview: previewFind(out) });
+      return out;
     },
   };
 }
