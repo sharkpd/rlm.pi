@@ -121,6 +121,10 @@ function validateConfig(raw: unknown): Partial<RlmConfig> {
   if (validateNumber(r.sandboxInitTimeoutMs, 100) !== undefined) out.sandboxInitTimeoutMs = r.sandboxInitTimeoutMs as number;
   const editEnabled = validateBoolean(r.editEnabled);
   if (editEnabled !== undefined) out.editEnabled = editEnabled;
+  const askUserQuestion = validateBoolean(r.askUserQuestion);
+  if (askUserQuestion !== undefined) out.askUserQuestion = askUserQuestion;
+  const todo = validateBoolean(r.todo);
+  if (todo !== undefined) out.todo = todo;
   const editRequestApproval = validateEditRequestApprovalMode(r.editRequestApproval);
   if (editRequestApproval !== undefined) out.editRequestApproval = editRequestApproval;
   const allowReadOutsideWorkspace = validateBoolean(r.allowReadOutsideWorkspace);

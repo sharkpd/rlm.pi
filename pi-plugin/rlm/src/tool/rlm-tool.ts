@@ -10,6 +10,7 @@ import { getMarkdownTheme, type Theme, type ToolDefinition } from "@earendil-wor
 import { Container, Markdown, Spacer, Text, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { createPiInteractiveDeps } from "../bridge/pi-interactive.ts";
 import type { RlmController, StartInput } from "../mode/rlm-mode.ts";
 import { createTelemetrySink } from "../telemetry/index.ts";
 import { formatCost, formatDuration, formatTokens, spinnerFrame } from "../ui/theme.ts";
@@ -100,7 +101,11 @@ export function createRlmTool(controller: RlmController): ToolDefinition<typeof 
           rootPrompt: params.prompt,
           context: params.context ?? "",
         };
-        const { done } = controller.start(ctx, input, bridge);
+        const interactive = createPiInteractiveDeps(ctx);
+        const { done } = controller.start(ctx, input, bridge, {
+          onAskUserQuestion: controller.config.askUserQuestion ? interactive.onAskUserQuestion : undefined,
+          onTodo: controller.config.todo ? interactive.onTodo : undefined,
+        });
         const result = await done;
 
         bridge.setAnswer(result.answer);

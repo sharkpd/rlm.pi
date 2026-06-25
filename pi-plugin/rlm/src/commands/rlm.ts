@@ -3,6 +3,7 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { safeWorkspaceRealPath } from "../bridge/fs-tools.ts";
+import { createPiInteractiveDeps } from "../bridge/pi-interactive.ts";
 import type { RlmController, RunHandle } from "../mode/rlm-mode.ts";
 import type { ProposedEdit } from "../sandbox/protocol.ts";
 import { applyAnchorEdits, type AnchorEdit } from "../text/edits.ts";
@@ -144,7 +145,13 @@ export function registerRlmCommand(pi: ExtensionAPI, controller: RlmController):
       if (!header) { ctx.ui.notify(`Run ${runId} has no header.`, "error"); return; }
       const systemPrompt = buildRlmSystemPrompt(
         { contextType: header.context.type, contextChars: header.context.chars, rootPrompt: header.rootPrompt, workspaceRoot: header.workspaceRoot, fsTools: header.meta.fsTools, projectMap: header.context.projectMap },
-        { orchestrator: header.meta.orchestrator, recursion: 1 < header.meta.maxDepth, edit: header.meta.editEnabled }, // CB: 1 < maxDepth, not hardcoded true
+        {
+          orchestrator: header.meta.orchestrator,
+          recursion: 1 < header.meta.maxDepth,
+          edit: header.meta.editEnabled,
+          askUserQuestion: controller.config.askUserQuestion,
+          todo: controller.config.todo,
+        }, // CB: 1 < maxDepth, not hardcoded true
       );
       let recon: ReconstructResult;
       try { recon = reconstructRlmState(cwd, dir, runId, systemPrompt); }
@@ -201,7 +208,14 @@ async function executeRlmRunWithResume(
       ctx.ui.setWidget?.("rlm-status", [`${glyph} RLM resume${turn}${cost}`], { placement: "aboveEditor" });
     }, sink);
     bridge.setRootPrompt(header.rootPrompt);
-    handle = controller.start(ctx, { kind: "resume", resume: recon, context }, bridge);
+    const interactive = createPiInteractiveDeps(ctx);
+    if (controller.config.todo) {
+      for (const row of recon.todoRows) await interactive.onTodo?.(row.action, row.params);
+    }
+    handle = controller.start(ctx, { kind: "resume", resume: recon, context }, bridge, {
+      onAskUserQuestion: controller.config.askUserQuestion ? interactive.onAskUserQuestion : undefined,
+      onTodo: controller.config.todo ? interactive.onTodo : undefined,
+    });
   } catch (e) {
     ctx.ui.notify(`RLM resume failed: ${e instanceof Error ? e.message : String(e)}`, "error");
     return;

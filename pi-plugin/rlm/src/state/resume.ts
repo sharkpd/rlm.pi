@@ -17,6 +17,7 @@ import {
   isCompaction,
   isHeader,
   isTerminal,
+  isTodo,
   isTurn,
   STATE_SCHEMA_VERSION,
   type Row,
@@ -38,6 +39,7 @@ export type ReconstructResult =
       readonly compactions: number;
       /** R-C1: the latest turn whose per-turn snapshot file exists on disk (undefined ⇒ no restore). */
       readonly snapshotTurn: number | undefined;
+      readonly todoRows: readonly { readonly action: string; readonly params: Record<string, unknown>; readonly result: string }[];
       readonly terminated: boolean;
     }
   | { readonly ok: false; readonly reason: "no-header" | "version-mismatch" | "no-turns" | "mid-file-hole"; readonly detail: string };
@@ -92,6 +94,7 @@ export function reconstructRlmState(
   let compactions = 0;
   let snapshotTurn: number | undefined; // R-C1: latest turn with an existing snapshot file
   let pendingReplOutputs: string | undefined;
+  const todoRows: { action: string; params: Record<string, unknown>; result: string }[] = [];
   let terminated = false;
 
   for (const row of rows) {
@@ -124,9 +127,13 @@ export function reconstructRlmState(
       pendingReplOutputs = row.replOutputs;
       continue;
     }
+    if (isTodo(row)) {
+      todoRows.push({ action: row.action, params: row.params, result: row.result });
+      continue;
+    }
     if (isTerminal(row)) terminated = true;
   }
 
   if (completedTurns === 0 && !terminated) return { ok: false, reason: "no-turns", detail: runId };
-  return { ok: true, header, history, pendingReplOutputs, usageSeed, best, editsAcc, completedTurns, compactions, snapshotTurn, terminated };
+  return { ok: true, header, history, pendingReplOutputs, usageSeed, best, editsAcc, completedTurns, compactions, snapshotTurn, todoRows, terminated };
 }

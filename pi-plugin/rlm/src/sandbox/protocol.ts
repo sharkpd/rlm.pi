@@ -16,11 +16,12 @@ export type WorkerRequest =
 
 /** Reply the parent sends to satisfy a sub-LLM interrupt. */
 export interface LlmReply {
-  type: "llm_reply";
-  rid: string;
-  response?: string;
-  responses?: string[];
-  error?: string;
+  readonly type: "llm_reply";
+  readonly rid: string;
+  readonly response?: string;
+  readonly responses?: readonly string[];
+  readonly answers?: readonly AskAnswer[];
+  readonly error?: string;
 }
 
 export type ParentMessage = WorkerRequest | LlmReply;
@@ -60,26 +61,108 @@ export type InterruptKind =
   | "read_file"
   | "grep"
   | "find"
-  | "propose_edit";
+  | "propose_edit"
+  | "ask_user_question"
+  | "todo";
+
+export interface AskOption {
+  readonly label: string;
+  readonly description?: string;
+  readonly preview?: string;
+}
+
+export interface AskQuestion {
+  readonly question: string;
+  readonly header: string;
+  readonly multiSelect?: boolean;
+  readonly options: readonly AskOption[];
+}
+
+export interface AskAnswer {
+  readonly question: string;
+  readonly selected: readonly string[];
+  readonly custom?: string;
+}
+
+export interface AskUserQuestionReply {
+  readonly answers: readonly AskAnswer[];
+}
+
+interface InterruptBase {
+  readonly rid: string;
+  readonly depth: number;
+}
+
+interface PromptInterrupt extends InterruptBase {
+  readonly type: "llm_query" | "rlm_query";
+  readonly prompt?: string;
+  readonly model?: string | null;
+}
+
+interface BatchedPromptInterrupt extends InterruptBase {
+  readonly type: "llm_query_batched" | "rlm_query_batched";
+  readonly prompts?: readonly string[];
+  readonly model?: string | null;
+}
+
+interface ReadFileInterrupt extends InterruptBase {
+  readonly type: "read_file";
+  readonly path?: string;
+  readonly start?: number | null;
+  readonly end?: number | null;
+}
+
+interface GrepInterrupt extends InterruptBase {
+  readonly type: "grep";
+  readonly pattern?: string;
+  readonly glob?: string | null;
+  readonly maxMatches?: number | null;
+}
+
+interface FindInterrupt extends InterruptBase {
+  readonly type: "find";
+  readonly glob?: string | null;
+}
+
+interface ProposeEditInterrupt extends InterruptBase {
+  readonly type: "propose_edit";
+  readonly path?: string;
+  readonly old?: string;
+  readonly new?: string;
+  readonly existingEdits?: readonly ProposedEdit[];
+}
+
+export interface AskUserQuestionInterrupt extends InterruptBase {
+  readonly type: "ask_user_question";
+  readonly questions: readonly AskQuestion[];
+}
+
+export interface TodoInterrupt extends InterruptBase {
+  readonly type: "todo";
+  readonly action: "create" | "update" | "list" | "get" | "delete" | "clear";
+  readonly id?: number;
+  readonly subject?: string;
+  readonly description?: string;
+  readonly status?: "pending" | "in_progress" | "completed" | "deleted";
+  readonly activeForm?: string;
+  readonly blockedBy?: readonly number[];
+  readonly addBlockedBy?: readonly number[];
+  readonly removeBlockedBy?: readonly number[];
+  readonly owner?: string;
+  readonly filterStatus?: string;
+  readonly includeDeleted?: boolean;
+}
 
 /** A mid-exec sub-LLM/tool request from the worker. */
-export interface WorkerInterrupt {
-  type: InterruptKind;
-  rid: string;
-  depth: number;
-  prompt?: string;
-  prompts?: string[];
-  model?: string | null;
-  path?: string;
-  start?: number | null;
-  end?: number | null;
-  pattern?: string;
-  glob?: string | null;
-  maxMatches?: number | null;
-  old?: string;
-  new?: string;
-  existingEdits?: ProposedEdit[];
-}
+export type WorkerInterrupt =
+  | PromptInterrupt
+  | BatchedPromptInterrupt
+  | ReadFileInterrupt
+  | GrepInterrupt
+  | FindInterrupt
+  | ProposeEditInterrupt
+  | AskUserQuestionInterrupt
+  | TodoInterrupt;
 
 export type WorkerMessage = WorkerResponse | WorkerInterrupt;
 
@@ -92,6 +175,8 @@ export const INTERRUPT_KINDS = new Set<InterruptKind>([
   "grep",
   "find",
   "propose_edit",
+  "ask_user_question",
+  "todo",
 ]);
 
 export function isInterrupt(msg: WorkerMessage): msg is WorkerInterrupt {

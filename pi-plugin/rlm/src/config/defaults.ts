@@ -28,6 +28,8 @@ export const DEFAULT_CONFIG: RlmConfig = {
   }),
   sandboxInitTimeoutMs: 30_000,
   editEnabled: false,
+  askUserQuestion: true,
+  todo: true,
   editRequestApproval: "ask",
   allowReadOutsideWorkspace: false,
   subSampling: Object.freeze({ maxTokens: 8192 }),

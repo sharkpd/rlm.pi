@@ -1,7 +1,7 @@
 /** Shared configuration + runtime types for the RLM engine. */
 
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import type { ProposedEdit } from "../sandbox/protocol.ts";
+import type { AskAnswer, AskQuestion, ProposedEdit } from "../sandbox/protocol.ts";
 
 export interface Sampling {
   maxTokens?: number;
@@ -80,6 +80,10 @@ export interface RlmConfig {
   sandboxInitTimeoutMs: number;
   /** Enable RLM to propose exact-anchor edits for explicit approval after the run. */
   editEnabled: boolean;
+  /** Allow ask_user_question() calls from the root REPL. */
+  askUserQuestion: boolean;
+  /** Allow todo() calls from the REPL. */
+  todo: boolean;
   /** Whether each validated propose_edit request asks the user first or records immediately. */
   editRequestApproval: EditRequestApprovalMode;
   /** SECURITY: allow first-class fs tools to read outside the workspace root. */
@@ -130,4 +134,11 @@ export interface RlmResult {
 }
 
 /** A function that runs an RLM to completion — used to wire recursion (rlm_query). */
+export interface InteractiveDeps {
+  /** Called when the sandbox issues ask_user_question; undefined = feature disabled. */
+  onAskUserQuestion?: (questions: readonly AskQuestion[]) => Promise<AskAnswer[]>;
+  /** Called when the sandbox issues todo; undefined = feature disabled. */
+  onTodo?: (action: string, params: Record<string, unknown>) => Promise<string>;
+}
+
 export type RunRlm = (input: RlmInput) => Promise<RlmResult>;

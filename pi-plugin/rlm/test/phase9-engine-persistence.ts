@@ -11,7 +11,7 @@
  * - isHeader validation (I2)
  */
 
-import { mkdtempSync, rmSync, appendFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendRow, generateRunId, pruneRuns, writeContextSidecar, trailPath } from "../src/state/index.ts";

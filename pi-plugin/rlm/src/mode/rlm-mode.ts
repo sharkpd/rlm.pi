@@ -12,7 +12,7 @@ import { buildProjectManifest } from "../bridge/fs-tools.ts";
 import { DEFAULT_CONFIG, DEFAULT_RUN_DIR } from "../config/defaults.ts";
 import { modelRef, resolveModelId, saveSettings } from "../config/settings.ts";
 import { createEngine } from "../core/engine.ts";
-import type { RlmConfig, RlmInput, RlmResult } from "../core/types.ts";
+import type { InteractiveDeps, RlmConfig, RlmInput, RlmResult } from "../core/types.ts";
 import type { ReconstructResult } from "../state/resume.ts";
 import { renderEditRequestPreview } from "../text/edit-preview.ts";
 import { contextLength } from "../text/tokens.ts";
@@ -96,7 +96,7 @@ export class RlmController {
     return { smart, worker };
   }
 
-  start(ctx: ExtensionContext, input: StartInput, bridge?: RlmToolBridge): RunHandle {
+  start(ctx: ExtensionContext, input: StartInput, bridge?: RlmToolBridge, interactive?: InteractiveDeps): RunHandle {
     const models = this.resolveModels(ctx);
     if (!models) throw new Error("no model with configured auth is available");
     if (this.active) throw new Error("RLM run already in progress"); // QC: mutual-exclusion guard
@@ -138,6 +138,8 @@ export class RlmController {
         signal: abortController.signal,
         bridge: bridge ?? new RlmToolBridge(() => {}),
         runState,
+        onAskUserQuestion: interactive?.onAskUserQuestion,
+        onTodo: interactive?.onTodo,
         onEditRequest: async (request) => {
           if (this.config.editRequestApproval === "yolo") return true;
           return ctx.hasUI ? ctx.ui.confirm("Approve RLM edit request?", renderEditRequestPreview(request)) : false;

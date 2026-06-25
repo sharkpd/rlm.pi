@@ -8,7 +8,7 @@
 
 import { appendFileSync, closeSync, fsyncSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { contextPath, runDir, runsDir, trailPath } from "./paths.ts";
-import type { Row } from "./rows.ts";
+import type { Row, TodoRow } from "./rows.ts";
 import { warn } from "./internal.ts";
 
 /** mkdir + append one JSON line. Returns true on success; warns + false on throw. Never throws. */
@@ -26,6 +26,10 @@ export function appendRow(cwd: string, dir: string, runId: string, row: Row): bo
     warn(e);
     return false;
   }
+}
+
+export function appendTodoRow(cwd: string, dir: string, runId: string, row: Omit<TodoRow, "kind">): boolean {
+  return appendRow(cwd, dir, runId, { kind: "todo", ...row });
 }
 
 /** Persist the original context ONCE at run start so resume can reload it. */

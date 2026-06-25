@@ -12,7 +12,7 @@ import type { ChatMsg } from "../bridge/model.ts";
 import type { ProposedEdit } from "../sandbox/protocol.ts";
 
 /** Bump when a row shape changes such that the resume fold cannot replay older files. */
-export const STATE_SCHEMA_VERSION = 1;
+export const STATE_SCHEMA_VERSION = 2;
 
 export interface UsageRow {
   readonly costUsd: number;
@@ -64,6 +64,15 @@ export interface CompactionRow {
   readonly usage: UsageRow;             // compaction model cost added to limits
 }
 
+export interface TodoRow {
+  readonly kind: "todo";
+  readonly turn: number;
+  readonly ts: string;
+  readonly action: string;
+  readonly params: Record<string, unknown>;
+  readonly result: string;
+}
+
 export interface TerminalRow {
   readonly kind: "terminal";
   readonly ts: string;
@@ -73,7 +82,7 @@ export interface TerminalRow {
   readonly usage: UsageRow;
 }
 
-export type Row = RunHeader | TurnRow | CompactionRow | TerminalRow;
+export type Row = RunHeader | TurnRow | CompactionRow | TodoRow | TerminalRow;
 
 const hasKind = (r: unknown, k: Row["kind"]): boolean =>
   typeof r === "object" && r !== null && (r as { kind?: unknown }).kind === k;
@@ -87,5 +96,8 @@ export const isTurn = (r: unknown): r is TurnRow =>
 
 export const isCompaction = (r: unknown): r is CompactionRow =>
   hasKind(r, "compaction") && Array.isArray((r as CompactionRow).history);
+
+export const isTodo = (r: unknown): r is TodoRow =>
+  hasKind(r, "todo") && typeof (r as TodoRow).action === "string" && typeof (r as TodoRow).result === "string";
 
 export const isTerminal = (r: unknown): r is TerminalRow => hasKind(r, "terminal");

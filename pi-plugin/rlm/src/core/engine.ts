@@ -10,6 +10,7 @@
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { createFsBridge } from "../bridge/fs-tools.ts";
+import { buildInteractiveHandlers } from "../bridge/interactive.ts";
 import { createLlmBridge } from "../bridge/llm-query.ts";
 import { type ChatMsg, modelComplete } from "../bridge/model.ts";
 import { createRlmHandlers } from "../bridge/rlm-query.ts";
@@ -28,13 +29,13 @@ import { compactHistory, shouldCompact } from "./compaction.ts";
 import { appendUserMessage } from "./history.ts";
 import { runTurn } from "./iteration.ts";
 import { type Limits, LimitError, LimitGuard } from "./limits.ts";
-import type { RlmConfig, RlmInput, RlmResult, RunRlm } from "./types.ts";
+import type { InteractiveDeps, RlmConfig, RlmInput, RlmResult, RunRlm } from "./types.ts";
 import { randomUUID } from "node:crypto";
-import { appendRow, generateRunId, pruneRuns, snapshotPath, writeContextSidecar } from "../state/index.ts";
+import { appendRow, appendTodoRow, generateRunId, pruneRuns, snapshotPath, writeContextSidecar } from "../state/index.ts";
 import { STATE_SCHEMA_VERSION } from "../state/rows.ts";
 import type { RunHeader } from "../state/rows.ts";
 
-export interface EngineDeps {
+export interface EngineDeps extends InteractiveDeps {
   smartModel: Model<Api>;
   workerModel: Model<Api>;
   registry: ModelRegistry;
@@ -193,6 +194,21 @@ export function createEngine(deps: EngineDeps): RunRlm {
             },
           }
         : {};
+      const interactiveHandlers = buildInteractiveHandlers({
+        onAskUserQuestion: deps.config.askUserQuestion ? deps.onAskUserQuestion : undefined,
+        onTodo: deps.config.todo ? deps.onTodo : undefined,
+        onTodoRow: (action, params, todoResult) => {
+          if (!persistOn || !runId || !deps.runState) return;
+          const ok = appendTodoRow(deps.runState.cwd, deps.runState.dir, runId, {
+            turn: completedTurns + 1, ts: nowIso(), action, params, result: todoResult,
+          });
+          if (!ok) persistOn = false;
+        },
+        bridge,
+        depth: input.depth,
+        parentId: selfReportId,
+      });
+
       sandbox = await PythonSandbox.spawn({
         depth: input.depth,
         execTimeoutS: deps.config.execTimeoutS,
@@ -201,7 +217,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
         signal: deps.signal,
         workspaceRoot: input.workspaceRoot,
         initTimeoutMs: deps.config.sandboxInitTimeoutMs,
-        handlers: { ...llm, ...rlm, ...(fs ? { readFile: fs.readFile, grep: fs.grep, find: fs.find } : {}), ...editHandlers },
+        handlers: { ...llm, ...rlm, ...(fs ? { readFile: fs.readFile, grep: fs.grep, find: fs.find } : {}), ...editHandlers, ...interactiveHandlers },
       });
 
       const meta = {
@@ -216,6 +232,8 @@ export function createEngine(deps: EngineDeps): RunRlm {
         orchestrator: deps.config.orchestrator,
         recursion: input.depth + 1 < deps.config.maxDepth,
         edit: Boolean(fs) && deps.config.editEnabled && input.depth === 0,
+        askUserQuestion: deps.config.askUserQuestion && input.depth === 0,
+        todo: deps.config.todo,
       });
       let history: ChatMsg[] = input.resume ? input.resume.history : [{ role: "system", content: system }];
       let pendingReplOutputs: string | undefined = input.resume?.pendingReplOutputs;

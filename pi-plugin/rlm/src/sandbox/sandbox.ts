@@ -14,6 +14,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   isInterrupt,
+  type AskAnswer,
+  type AskQuestion,
   type ParentMessage,
   type ProposedEdit,
   type ReplResult,
@@ -26,13 +28,15 @@ import {
 /** Handlers the bridge installs to service sub-LLM interrupts. Return the reply payload. */
 export interface SubLlmHandlers {
   llmQuery(prompt: string, model: string | null, depth: number): Promise<string>;
-  llmQueryBatched(prompts: string[], model: string | null, depth: number): Promise<string[]>;
+  llmQueryBatched(prompts: readonly string[], model: string | null, depth: number): Promise<string[]>;
   rlmQuery(prompt: string, model: string | null, depth: number): Promise<string>;
-  rlmQueryBatched(prompts: string[], model: string | null, depth: number): Promise<string[]>;
+  rlmQueryBatched(prompts: readonly string[], model: string | null, depth: number): Promise<string[]>;
   readFile(path: string, start: number | null, end: number | null): Promise<string>;
   grep(pattern: string, glob: string | null, maxMatches: number | null): Promise<string>;
   find(glob: string | null): Promise<string>;
   proposeEdit(path: string, oldText: string, newText: string, existingEdits: readonly ProposedEdit[]): Promise<string>;
+  askUserQuestion(questions: readonly AskQuestion[], depth: number): Promise<AskAnswer[]>;
+  todo(action: string, params: Record<string, unknown>, depth: number): Promise<string>;
 }
 
 export interface SandboxOptions {
@@ -76,6 +80,12 @@ const REJECT: SubLlmHandlers = {
   grep: async () => "Error: filesystem tools are not available in this run",
   find: async () => "Error: filesystem tools are not available in this run",
   proposeEdit: async () => "Error: edit tools are not enabled in this run",
+  askUserQuestion: async (questions) => questions.map((q) => ({
+    question: q.question,
+    selected: [],
+    custom: "Error: ask_user_question not configured",
+  })),
+  todo: async () => "Error: todo not configured",
 };
 
 /** Distributive omit so each union member keeps its own fields (plain Omit collapses to shared keys). */
@@ -331,8 +341,17 @@ export class PythonSandbox {
       } else if (msg.type === "find") {
         const response = await h.find(msg.glob ?? null);
         this.reply(msg.rid, { response });
-      } else {
+      } else if (msg.type === "propose_edit") {
         const response = await h.proposeEdit(msg.path ?? "", msg.old ?? "", msg.new ?? "", msg.existingEdits ?? []);
+        this.reply(msg.rid, { response });
+      } else if (msg.type === "ask_user_question") {
+        const answers = await h.askUserQuestion(msg.questions ?? [], d);
+        this.reply(msg.rid, { answers });
+      } else if (msg.type === "todo") {
+        const params = Object.fromEntries(
+          Object.entries(msg).filter(([key]) => !["type", "rid", "depth", "action"].includes(key)),
+        );
+        const response = await h.todo(msg.action ?? "list", params, d);
         this.reply(msg.rid, { response });
       }
     } catch (err) {
@@ -340,7 +359,7 @@ export class PythonSandbox {
     }
   }
 
-  private reply(rid: string, body: { response?: string; responses?: string[]; error?: string }): void {
+  private reply(rid: string, body: { response?: string; responses?: string[]; answers?: AskAnswer[]; error?: string }): void {
     if (!this.disposed) this.send({ type: "llm_reply", rid, ...body });
   }
 

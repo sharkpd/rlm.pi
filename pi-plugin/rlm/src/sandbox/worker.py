@@ -63,7 +63,8 @@ for _blocked in ("eval", "exec", "compile", "input", "globals", "locals"):
 RESERVED = frozenset(
     {
         "llm_query", "llm_query_batched", "rlm_query", "rlm_query_batched",
-        "read_file", "grep", "find", "propose_edit", "SHOW_EDITS", "SHOW_VARS", "answer", "context", "context_0",
+        "read_file", "grep", "find", "propose_edit", "ask_user_question", "todo",
+        "SHOW_EDITS", "SHOW_VARS", "answer", "context", "context_0",
     }
 )
 
@@ -117,6 +118,8 @@ class Worker:
         ns["grep"] = self._grep
         ns["find"] = self._find
         ns["propose_edit"] = self._propose_edit
+        ns["ask_user_question"] = self._ask_user_question
+        ns["todo"] = self._todo
         ns["SHOW_EDITS"] = self._show_edits
         ns["SHOW_VARS"] = self._show_vars
         if not isinstance(ns.get("answer"), _AnswerDict):
@@ -210,6 +213,61 @@ class Worker:
     def _find(self, glob: str | None = None) -> str:
         r = self._rpc("find", {"glob": glob})
         return f"Error: {r['error']}" if r.get("error") else r.get("response", "")
+
+    def _ask_user_question(self, questions: list[dict]) -> list[dict]:
+        """Present structured questions to the user; blocks until answered.
+
+        Returns a list of {question, selected, custom?} dicts.
+        Each dict has: question (str), selected (list[str]), custom (str|None).
+        Only valid at root depth; sub-RLM calls return an error answer.
+        """
+        if self.depth > 0:
+            return [
+                {"question": str(q.get("question", "")) if isinstance(q, dict) else "", "selected": [],
+                 "custom": "Error: ask_user_question not available inside rlm_query sub-calls"}
+                for q in questions
+            ] if isinstance(questions, list) else [{"question": "", "selected": [], "custom": "Error: ask_user_question not available inside rlm_query sub-calls"}]
+        if not isinstance(questions, list) or not questions:
+            return [{"question": "", "selected": [], "custom": "Error: questions must be a non-empty list"}]
+        cleaned = []
+        for q in questions:
+            if not isinstance(q, dict) or "question" not in q or "options" not in q:
+                return [{"question": "", "selected": [], "custom": "Error: each question needs 'question', 'header', 'options'"}]
+            opts = q.get("options")
+            if not isinstance(opts, list):
+                return [{"question": str(q.get("question", "")), "selected": [], "custom": "Error: options must be a list"}]
+            cleaned_opts = []
+            for o in opts:
+                if not isinstance(o, dict) or "label" not in o:
+                    return [{"question": str(q.get("question", "")), "selected": [], "custom": "Error: each option needs 'label'"}]
+                item = {"label": str(o["label"]), "description": str(o.get("description", ""))}
+                if "preview" in o:
+                    item["preview"] = str(o["preview"])
+                cleaned_opts.append(item)
+            cleaned.append({
+                "question": str(q["question"]),
+                "header": str(q.get("header", "Q")),
+                "multiSelect": bool(q.get("multiSelect", False)),
+                "options": cleaned_opts,
+            })
+        r = self._rpc("ask_user_question", {"questions": cleaned})
+        if r.get("error"):
+            return [{"question": q["question"], "selected": [], "custom": f"Error: {r['error']}"} for q in cleaned]
+        answers = r.get("answers", [])
+        return answers if isinstance(answers, list) else []
+
+    def _todo(self, action: str, **kwargs) -> str:
+        """Manage the run's task list.
+
+        action: "create" | "update" | "list" | "get" | "delete" | "clear"
+        kwargs: id, subject, description, status, activeForm, blockedBy, owner, filterStatus
+        Returns a human-readable string result.
+        """
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        r = self._rpc("todo", {"action": str(action), **params})
+        if r.get("error"):
+            return f"Error: {r['error']}"
+        return str(r.get("response", "ok"))
 
     def _propose_edit(self, path: str, old: str, new: str) -> str:
         """Validate an anchor edit with the parent; record it on success.

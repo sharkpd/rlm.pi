@@ -18,6 +18,8 @@ export interface SystemPromptOptions {
   orchestrator?: boolean;
   recursion?: boolean;
   edit?: boolean;
+  askUserQuestion?: boolean;
+  todo?: boolean;
 }
 
 function howToRunCode(): string {
@@ -28,7 +30,7 @@ function howToRunCode(): string {
   ].join(" ");
 }
 
-function replGlossary(recursion: boolean, fsTools: boolean, edit: boolean): string {
+function replGlossary(recursion: boolean, fsTools: boolean, edit: boolean, askUserQuestion: boolean, todo: boolean): string {
   const lines = [
     "Available in the REPL:",
     "- `context`: the important, potentially very long input (usually `str` or `list[str]`).",
@@ -66,6 +68,25 @@ function replGlossary(recursion: boolean, fsTools: boolean, edit: boolean): stri
         "  + llm_query_batched to edit many files programmatically; print only short confirmations.",
       );
     }
+  }
+  if (askUserQuestion) {
+    lines.push(
+      "- `ask_user_question(questions: list[dict]) -> list[dict]`: pause and present the user",
+      "  with 1-4 structured questions. Each question: {question, header, options: [{label, description}],",
+      "  multiSelect?}. Returns list of {question, selected: [label], custom?}.",
+      "  Use when you have 2-4 concrete options from your analysis and need a decision before proceeding.",
+      "  DO NOT ask open-ended chat questions — use concrete options grounded in code/data.",
+      "  Only valid at root depth; returns an error inside rlm_query sub-calls.",
+    );
+  }
+  if (todo) {
+    lines.push(
+      "- `todo(action, **kwargs) -> str`: manage a task list visible to the user.",
+      "  Actions: create(subject, description?, status='pending'), update(id, status?, activeForm?),",
+      "  list(filterStatus?), get(id), delete(id), clear().",
+      "  Status flow: pending → in_progress → completed.",
+      "  Use to plan multi-step work before starting, then mark tasks as you complete them.",
+    );
   }
   if (recursion) {
     lines.push(
@@ -116,7 +137,7 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
     "",
     howToRunCode(),
     "",
-    replGlossary(recursion, meta.fsTools ?? false, opts.edit ?? false),
+    replGlossary(recursion, meta.fsTools ?? false, opts.edit ?? false, opts.askUserQuestion ?? false, opts.todo ?? false),
     "",
     "REPL outputs over ~20K characters are truncated, so for long payloads (including `read_file`",
     "output) slice them and pass the slices through `llm_query` rather than printing them whole.",
