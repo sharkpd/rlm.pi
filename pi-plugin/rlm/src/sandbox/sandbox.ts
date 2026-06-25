@@ -59,6 +59,7 @@ export interface SandboxOptions {
 }
 
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "worker.py");
+const TODO_PROTO_KEYS = new Set(["type", "rid", "depth", "action"]);
 
 // The sandbox runs untrusted model-authored code; it must never inherit provider secrets.
 const SENSITIVE_ENV = /API[_-]?KEY|ACCESS[_-]?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|ANTHROPIC|OPENAI|_KEY$/i;
@@ -349,7 +350,7 @@ export class PythonSandbox {
         this.reply(msg.rid, { answers });
       } else if (msg.type === "todo") {
         const params = Object.fromEntries(
-          Object.entries(msg).filter(([key]) => !["type", "rid", "depth", "action"].includes(key)),
+          Object.entries(msg).filter(([key]) => !TODO_PROTO_KEYS.has(key)),
         );
         const response = await h.todo(msg.action ?? "list", params, d);
         this.reply(msg.rid, { response });

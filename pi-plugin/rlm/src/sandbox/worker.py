@@ -222,11 +222,14 @@ class Worker:
         Only valid at root depth; sub-RLM calls return an error answer.
         """
         if self.depth > 0:
+            qlist = questions if isinstance(questions, list) else []
             return [
-                {"question": str(q.get("question", "")) if isinstance(q, dict) else "", "selected": [],
+                {"question": str(q.get("question", "")) if isinstance(q, dict) else "",
+                 "selected": [],
                  "custom": "Error: ask_user_question not available inside rlm_query sub-calls"}
-                for q in questions
-            ] if isinstance(questions, list) else [{"question": "", "selected": [], "custom": "Error: ask_user_question not available inside rlm_query sub-calls"}]
+                for q in qlist
+            ] or [{"question": "", "selected": [],
+                   "custom": "Error: ask_user_question not available inside rlm_query sub-calls"}]
         if not isinstance(questions, list) or not questions:
             return [{"question": "", "selected": [], "custom": "Error: questions must be a non-empty list"}]
         cleaned = []
