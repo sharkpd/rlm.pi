@@ -13,14 +13,12 @@ import { Value } from "typebox/value";
 import { createPiInteractiveDeps } from "../bridge/pi-interactive.ts";
 import type { RlmController, StartInput } from "../mode/rlm-mode.ts";
 import { createTelemetrySink } from "../telemetry/index.ts";
-import { formatCost, formatTokens } from "../ui/theme.ts";
-import { type RlmDetails, type RlmSubcall } from "./rlm-details.ts";
+import { formatCost, formatTokens, spinnerFrame } from "../ui/theme.ts";
+import { type RlmDetails } from "./rlm-details.ts";
 import { RlmEmitter } from "./rlm-events.ts";
 import { RlmEventAggregator } from "./rlm-aggregator.ts";
 import {
   headlineStatusGlyph,
-  subcallStatusGlyph,
-  subcallStatsLine,
   renderCollapsedSubcallTree,
   renderExpandedSubcallTree,
 } from "./subcall-render.ts";
@@ -181,29 +179,6 @@ function renderExpanded(details: RlmDetails, theme: Theme): Component {
 }
 
 // ── Collapsed view ──
-
-function renderCollapsedTree(
-  byParent: ReadonlyMap<string | undefined, readonly RlmSubcall[]>,
-  parentId: string | undefined,
-  prefix: string,
-  theme: Theme,
-): string[] {
-  const lines: string[] = [];
-  const direct = byParent.get(parentId) ?? [];
-  for (let i = 0; i < direct.length; i++) {
-    const sc = direct[i]; const isLast = i === direct.length - 1;
-    const branch = isLast ? "└─" : "├─";
-    const gGlyph = sc.status === "error" ? theme.fg("error", "✗")
-      : sc.status === "running" ? spinnerFrame() : theme.fg("success", "✓");
-    const gStats: string[] = [];
-    if (sc.costUsd > 0) gStats.push(formatCost(sc.costUsd));
-    if (sc.tokens > 0) gStats.push(`${formatTokens(sc.tokens)} tok`);
-    lines.push(`${prefix}${branch} ${sc.label}  ${gGlyph}  ${gStats.join(" · ")}`);
-    const childPrefix = prefix + (isLast ? "   " : "│  ");
-    lines.push(...renderCollapsedTree(byParent, sc.id, childPrefix, theme));
-  }
-  return lines;
-}
 
 function renderCollapsed(details: RlmDetails, theme: Theme): Text {
   const glyph = headlineStatusGlyph(details.status, theme);
