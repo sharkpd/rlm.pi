@@ -102,9 +102,15 @@ export default function rlmExtension(pi: ExtensionAPI): void {
       const result = await packRepository(cwd);
       if (result.ok) {
         const contextText = formatForLLM(result.value);
+        const instruction = [
+          "ANALYZE THIS REPOSITORY using repl({code}) — do NOT read files one-by-one.",
+          `Total: ${result.value.totalFiles} files, ${result.value.totalChars.toLocaleString()} chars — too large for direct reading.`,
+          "Use Python in repl() to chunk context, delegate to llm_query, and aggregate.",
+          "",
+        ].join("\n");
         const contextMsg = {
           role: "user" as const,
-          content: contextText,
+          content: instruction + contextText,
           timestamp: 0,
         } as (typeof filtered)[number];
 

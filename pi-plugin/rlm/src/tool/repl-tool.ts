@@ -13,8 +13,8 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { Model, Usage, Api } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { resolveModelId } from "../config/settings.ts";
@@ -32,6 +32,12 @@ import { RlmEmitter } from "./rlm-events.ts";
 import type { ReplDetails } from "./repl-details.ts";
 import type { RlmSubcall } from "./rlm-details.ts";
 import { createEngine } from "../core/engine.ts";
+import { formatCost, formatTokens, spinnerFrame } from "../ui/theme.ts";
+import {
+  headlineStatusGlyph,
+  renderCollapsedSubcallTree,
+  renderExpandedSubcallTree,
+} from "./subcall-render.ts";
 
 // ── Parameter schema ──
 
@@ -89,7 +95,11 @@ class NativeBridgeState {
         track(res.usage);
         return res.text;
       } catch (err) {
-        return `Error: ${err instanceof Error ? err.message : String(err)}`;
+        const msg = err instanceof Error ? err.message : String(err);
+        const hint = /credit|402|payment|quota|rate.limit/i.test(msg)
+          ? " — try smaller batches or individual llm_query calls"
+          : "";
+        return `Error: ${msg}${hint}`;
       }
     }
 
@@ -122,7 +132,9 @@ class NativeBridgeState {
           complete1(p, model, (u) => { cost += u.cost.total; tokens += u.totalTokens; }),
         );
         const failed = out.filter((o: string) => o.startsWith("Error:")).length;
-        const error = failed === out.length ? `all ${out.length} sub-calls failed`
+        const allFailed = failed === out.length;
+        const error = allFailed
+          ? `all ${out.length} sub-calls failed — reduce batch size or try llm_query individually`
           : failed > 0 ? `${failed}/${out.length} sub-calls failed` : undefined;
         if (id) state.currentEmitter?.emitSubcallUpdated({ id,
           status: error ? "error" : "done", costUsd: cost, tokens,
@@ -245,6 +257,10 @@ class NativeBridgeState {
 class SubcallCollector {
   readonly subcalls: RlmSubcall[] = [];
   totals = { costUsd: 0, tokens: 0 };
+  capturedStdout = "";
+  capturedStderr = "";
+  startedAt = Date.now();
+  finished = false;
   private readonly unsubs: (() => void)[];
 
   constructor(emitter: RlmEmitter) {
@@ -315,7 +331,7 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
     description: "Execute Python code in a persistent REPL sandbox with the full repository context pre-loaded. Variables, imports, and state persist across calls. Supports llm_query, rlm_query, todo, and ask_user_question inside the sandbox.",
     parameters: ReplToolParams,
 
-    async execute(_toolCallId, rawParams, _execSignal, _onUpdate, ctx) {
+    async execute(_toolCallId, rawParams, _execSignal, onUpdate, ctx) {
       if (!Value.Check(ReplToolParams, rawParams)) {
         const errors = [...Value.Errors(ReplToolParams, rawParams)]
           .map((e) => `${e.instancePath}: ${e.message}`).join("; ");
@@ -334,6 +350,31 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
         maxTokens: config.maxTokens,
         maxErrors: config.maxErrors,
       });
+
+      // ── Progressive rendering: spinner + live sub-call tree ──
+      let spinnerHandle: ReturnType<typeof setInterval> | undefined;
+      const notify = (overrideStatus?: ReplDetails["status"]) => {
+        if (!onUpdate) return;
+        const output = collector.capturedStdout ?? "";
+        onUpdate({
+          content: [{ type: "text", text: output.slice(0, 500) || (overrideStatus === "running" ? `${spinnerFrame()} Running…` : "(no output)") }],
+          details: {
+            status: overrideStatus ?? "running",
+            output,
+            stderr: collector.capturedStderr ?? "",
+            executionTimeMs: Date.now() - collector.startedAt,
+            subcalls: [...collector.subcalls],
+            totals: { ...collector.totals },
+          },
+        });
+      };
+      if (onUpdate) {
+        notify("running");
+        spinnerHandle = setInterval(() => {
+          if (collector.finished) { clearInterval(spinnerHandle); spinnerHandle = undefined; return; }
+          notify("running");
+        }, 100);
+      }
 
       // Detect queue contention: notify if another repl() is already executing
       let queuedId: string | undefined;
@@ -379,6 +420,9 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
         const start = Date.now();
         const result: ReplResult = await sandboxManager.exec(params.code);
         const elapsed = Date.now() - start;
+        collector.capturedStdout = result.stdout;
+        collector.capturedStderr = result.stderr;
+        collector.finished = true;
 
         const subUsage: Usage = {
           input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: collector.totals.tokens,
@@ -388,31 +432,35 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
 
         if (queuedId) emitter.emitSubcallUpdated({ id: queuedId, status: "done" });
 
-        return {
-          content: [{ type: "text", text: result.stdout || result.answerContent || "(no output)" }],
-          details: {
-            status: "done",
-            output: result.stdout,
-            stderr: result.stderr,
-            executionTimeMs: elapsed,
-            subcalls: collector.subcalls,
-            totals: collector.totals,
-          },
+        const details: ReplDetails = {
+          status: "done",
+          output: result.stdout,
+          stderr: result.stderr,
+          executionTimeMs: elapsed,
+          subcalls: collector.subcalls,
+          totals: collector.totals,
         };
+        // Final progressive update
+        onUpdate?.({ content: [{ type: "text", text: result.stdout.slice(0, 500) || "(no output)" }], details });
+        return { content: [{ type: "text", text: result.stdout || result.answerContent || "(no output)" }], details };
       } catch (e) {
+        collector.finished = true;
         const msg = e instanceof Error ? e.message : String(e);
+        const details: ReplDetails = {
+          status: "error",
+          output: "",
+          stderr: msg,
+          executionTimeMs: 0,
+          subcalls: collector.subcalls,
+          totals: collector.totals,
+        };
+        onUpdate?.({ content: [{ type: "text", text: `REPL error: ${msg}` }], details });
         return {
           content: [{ type: "text", text: `REPL error: ${msg}` }],
-          details: {
-            status: "error",
-            output: "",
-            stderr: msg,
-            executionTimeMs: 0,
-            subcalls: collector.subcalls,
-            totals: collector.totals,
-          },
+          details,
         };
       } finally {
+        if (spinnerHandle) clearInterval(spinnerHandle);
         collector.dispose();
         emitter.shutdown();
       }
@@ -431,22 +479,71 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
       const details = result.details as ReplDetails | undefined;
       if (!details) return new Text("(no output)", 0, 0);
 
-      const glyph = details.status === "error" ? theme.fg("error", "✗") : theme.fg("success", "✓");
-      const stats = details.executionTimeMs > 0 ? ` (${details.executionTimeMs}ms)` : "";
-
-      let body = `${glyph} ${theme.fg("toolTitle", theme.bold("REPL"))}${stats}`;
-      if (details.output) {
-        const out = details.output.length > 500 ? `${details.output.slice(0, 500)}...` : details.output;
-        body += `\n  ${theme.fg("toolOutput", out.replace(/\n/g, "\n  "))}`;
+      if (expanded) {
+        return renderReplExpanded(details, theme);
       }
-      if (details.stderr) {
-        body += `\n  ${theme.fg("error", details.stderr.slice(0, 200))}`;
-      }
-      if (expanded && details.subcalls.length > 0) {
-        body += `\n  ${theme.fg("muted", `${details.subcalls.length} sub-call(s)`)}`;
-      }
-
-      return new Text(body, 0, 0);
+      return renderReplCollapsed(details, theme);
     },
   };
+}
+
+// ── Collapsed view ──
+
+function renderReplCollapsed(details: ReplDetails, theme: Theme): Text {
+  const glyph = details.status === "running"
+    ? headlineStatusGlyph("running", theme)
+    : details.status === "error" ? theme.fg("error", "✗") : theme.fg("success", "✓");
+
+  const parts: string[] = [];
+  parts.push(formatCost(details.totals.costUsd));
+  if (details.totals.tokens > 0) parts.push(`${formatTokens(details.totals.tokens)} tok`);
+  if (details.executionTimeMs > 0) parts.push(`${details.executionTimeMs}ms`);
+  const stats = parts.length > 0 ? ` ${theme.fg("dim", parts.join(" · "))}` : "";
+
+  const header = `${glyph} ${theme.fg("toolTitle", theme.bold("REPL"))}${stats}`;
+
+  let body = "";
+  if (details.subcalls.length > 0) {
+    body = `\n${renderCollapsedSubcallTree(details.subcalls, theme)}`;
+  }
+
+  const expandHint = details.status === "running" ? "" : `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+  return new Text(`${header}${body}${expandHint}`, 0, 0);
+}
+
+// ── Expanded view ──
+
+function renderReplExpanded(details: ReplDetails, theme: Theme): Container {
+  const container = new Container();
+
+  // Header: status + stats
+  const glyph = details.status === "error" ? theme.fg("error", "✗") : theme.fg("success", "✓");
+  const parts: string[] = [];
+  parts.push(formatCost(details.totals.costUsd));
+  if (details.totals.tokens > 0) parts.push(`${formatTokens(details.totals.tokens)} tok`);
+  if (details.executionTimeMs > 0) parts.push(`${details.executionTimeMs}ms`);
+  const stats = parts.length > 0 ? ` · ${theme.fg("dim", parts.join(" · "))}` : "";
+  container.addChild(new Text(`${glyph} ${theme.fg("toolTitle", theme.bold("REPL"))}${stats}`, 0, 0));
+
+  // Output
+  if (details.output) {
+    container.addChild(new Spacer(1));
+    const out = details.output.length > 2000 ? `${details.output.slice(0, 2000)}...` : details.output;
+    container.addChild(new Text(out, 0, 0));
+  }
+
+  // Stderr
+  if (details.stderr) {
+    container.addChild(new Spacer(1));
+    container.addChild(new Text(theme.fg("error", details.stderr.slice(0, 500)), 0, 0));
+  }
+
+  // Sub-call tree
+  if (details.subcalls.length > 0) {
+    container.addChild(new Spacer(1));
+    container.addChild(new Text(theme.fg("muted", "─── Sub-calls ───"), 0, 0));
+    container.addChild(renderExpandedSubcallTree(details.subcalls, theme));
+  }
+
+  return container;
 }

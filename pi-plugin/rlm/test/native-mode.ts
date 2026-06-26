@@ -53,11 +53,16 @@ function testFormatForLLM() {
 
 function testNativeSystemPrompt() {
   const prompt = buildNativeSystemPrompt();
-  check("buildNativeSystemPrompt — non-empty", prompt.length > 0);
+  check("buildNativeSystemPrompt — non-empty", prompt.length > 500);
   check("buildNativeSystemPrompt — contains mode marker", prompt.includes("NATIVE RLM MODE"));
-  check("buildNativeSystemPrompt — mentions repl tool", prompt.includes("repl"));
-  check("buildNativeSystemPrompt — mentions normal tools", prompt.includes("read") || prompt.includes("grep") || prompt.includes("tools"));
-  check("buildNativeSystemPrompt — no advance_phase", !prompt.includes("advance_phase"));
+  check("buildNativeSystemPrompt — mentions repl tool", prompt.includes("repl({code"));
+  check("buildNativeSystemPrompt — mentions context", prompt.includes("context"));
+  check("buildNativeSystemPrompt — mentions llm_query", prompt.includes("llm_query"));
+  check("buildNativeSystemPrompt — mentions rlm_query", prompt.includes("rlm_query"));
+  check("buildNativeSystemPrompt — mentions orchestrator", prompt.includes("orchestrator, not a solver"));
+  check("buildNativeSystemPrompt — mentions chunking", prompt.includes("chunk_size"));
+  check("buildNativeSystemPrompt — mentions answer dict", prompt.includes("answer[\"ready\"]"));
+  check("buildNativeSystemPrompt — mentions native tools", prompt.includes("zebra-mcp"));
 }
 
 // ── SandboxManager tests ──

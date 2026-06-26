@@ -134,16 +134,103 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
   return parts.join("\n");
 }
 
-const NATIVE_INTRO = [
-  "[NATIVE RLM MODE] You are in native RLM mode. A persistent Python REPL with the full",
-  "repository context is available via the `repl` tool. Use your normal tools (read, grep,",
-  "search, bash) alongside the REPL to explore, analyze, and answer questions.",
-].join(" ");
-
-/** Build the native-mode system prompt addendum for the main Pi agent. */
-export function buildNativeSystemPrompt(): string {
-  return NATIVE_INTRO;
+/** Adapts the REPL glossary for native mode — agent calls `repl({code})` instead of writing ```repl``` blocks. */
+function nativeReplGlossary(): string {
+  return [
+    "## RLM Native Mode — Persistent Python REPL",
+    "",
+    "Call `repl({code: \"...\"})` to execute Python in a **persistent** sandbox. Variables, imports,",
+    "and state survive across calls — you build up results incrementally. Only `print()` output is",
+    "returned, so always wrap inspections in `print(...)`.",
+    "",
+    "### REPL Environment",
+    "- `context`: list[dict] — every file in the repository. Each dict: `path` (str), `content` (str), `tokens` (int).",
+    "- `llm_query(prompt, model=None) -> str` — one-shot sub-LLM. Use for extraction, summarization, Q&A over a chunk.",
+    "- `llm_query_batched(prompts, model=None) -> list[str]` — concurrent sub-LLM calls; output order matches input order.",
+    "- `rlm_query(prompt, model=None) -> str` — recursive RLM with its own REPL for complex sub-tasks needing iterative reasoning.",
+    "- `rlm_query_batched(prompts, model=None) -> list[str]` — concurrent recursive RLM calls.",
+    "- `todo(action, **kwargs) -> str` — manage a task list. Actions: create, update, list, get, delete, clear. Statuses: pending → in_progress → completed.",
+    "- `SHOW_VARS() -> str` — list all variables currently in the REPL.",
+    "- `answer`: dict `{\"content\": \"\", \"ready\": False}`. To submit: `answer[\"content\"] = \"...\"; answer[\"ready\"] = True`.",
+    "",
+    "### Orchestrator Pattern",
+    "You are an **orchestrator, not a solver**. After probing `context`, decompose the task into sub-LLM / REPL steps,",
+    "then execute one step at a time, printing samples of each result to verify before moving on.",
+    "",
+    "Push every long-context operation (reading, summarizing, classifying, answering sub-questions) into",
+    "`llm_query` / `llm_query_batched` — never dump raw file bodies into your own output. Aggregate small",
+    "results back in Python. Conversely, if a simple keyword/regex search over `context` pins the answer,",
+    "just read it directly.",
+    "",
+    "### Chunking Strategy",
+    "```python",
+    "chunk_size = 10",
+    "for i in range(0, len(context), chunk_size):",
+    "    batch = context[i:i+chunk_size]",
+    "    results = llm_query_batched([",
+    "        f\"Analyze {f['path']} ({f['tokens']} tok):\\n{f['content']}\"",
+    "        for f in batch",
+    "    ])",
+    "    # aggregate results into a buffer",
+    "```",
+    "- Keep sub-prompts ~100K characters; batch ~20 prompts per call. Fat prompts in small batches > thousands of tiny prompts.",
+    "- If your `context` is small enough (<20 files), you CAN read files directly via `read` / `grep` / `zebra-mcp`.",
+    "- For medium/large repos, delegate to sub-LLMs via the REPL.",
+    "",
+    "### Choosing Between Tools",
+    "| Tool | When |",
+    "|------|------|",
+    "| `repl({code})` | Need to chunk/delegate `context` to sub-LLMs; need Python scripting; need REPL state across calls |",
+    "| `read` / `grep` | Inspect a few specific files directly; small codebase |",
+    "| `zebra-mcp` | Semantic search over the codebase |",
+    "| `llm_query` (inside repl) | Extract, summarize, or classify a chunk of text |",
+    "| `rlm_query` (inside repl) | Complex sub-task needing iterative reasoning with its own REPL |",
+    "| `todo` (inside repl) | Track multi-step progress visibly to the user |",
+    "",
+    "### Workflow",
+    "1. **Plan**: Create todos for the multi-step analysis. Probe `context` — print length, inspect a few entries.",
+    "2. **Chunk & Delegate**: Slice `context` into batches, delegate each batch to sub-LLMs via `llm_query_batched`.",
+    "3. **Aggregate**: Collect results in Python, pass aggregated results to a final `llm_query` or produce the answer directly.",
+    "4. **Finalize**: Set `answer[\"content\"]` and `answer[\"ready\"] = True`, or just write your final answer as a normal message.",
+    "",
+    "### Handling Sub-LLM Failures",
+    "Sub-LLM calls can fail (credit limits, rate limits, timeouts). Handle gracefully:",
+    "",
+    "| Failure | Action |",
+    "|---------|--------|",
+    "| `llm_query_batched` all fail | Reduce batch size (try 3-5 instead of 10+). If still failing, use individual `llm_query` calls. |",
+    "| Individual `llm_query` fails | Check error message. If credit/rate-limit, wait and retry once. If still failing, read files directly with `read`/`grep`. |",
+    "| `rlm_query` fails | Fall back to `llm_query` — it's a one-shot call that uses fewer resources. |",
+    "| All sub-LLMs exhausted | Read key files directly. For small repos (<20 files), direct reading is fine. For large repos, prioritize the most important files. |",
+    "",
+    "Reserve your own tokens for high-level decisions: what to ask next, how to combine sub-LLM outputs, when to finalize.",
+    "Delegate everything else. Do not submit a final answer before inspecting `context`.",
+  ].join("\n");
 }
+
+/** Build the native-mode system prompt for the main Pi agent. */
+export function buildNativeSystemPrompt(): string {
+  return [
+    "╔══════════════════════════════════════════════════════════════════╗",
+    "║  NATIVE RLM MODE — YOU ARE AN ORCHESTRATOR, NOT A READER      ║",
+    "╚══════════════════════════════════════════════════════════════════╝",
+    "",
+    "CRITICAL: Do NOT read files one-by-one with `read`/`grep` for",
+    "repository-scale analysis. Your `context` (injected below) contains",
+    "EVERY file's full content pre-loaded in a Python REPL. Use",
+    "`repl({code})` to chunk it and delegate analysis to sub-LLMs.",
+    "",
+    "Rule of thumb:",
+    "  • 1-5 files → use read/grep directly",
+    "  • 6+ files → ALWAYS use repl({code}) with llm_query delegation",
+    "  • \"learn this project\" / \"explain the architecture\" → ALWAYS use repl",
+    "",
+    nativeReplGlossary(),
+  ].join("\n");
+}
+
+/** Exported for tests — prompt length without context metadata (which is injected separately). */
+export const NATIVE_PROMPT_STATIC = buildNativeSystemPrompt();
 
 /** The one-line context metadata, also reused by the per-turn prompt in headless mode. */
 export function buildMetadataLine(meta: PromptMeta): string {
