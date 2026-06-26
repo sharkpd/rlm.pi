@@ -17,7 +17,7 @@ import { createRlmHandlers } from "../bridge/rlm-query.ts";
 import { resolveModelId } from "../config/settings.ts";
 import { buildRlmSystemPrompt } from "../prompts/system.ts";
 import { buildTurnPrompt, FINALIZE_PROMPT } from "../prompts/user.ts";
-import type { RlmToolBridge } from "../tool/rlm-details.ts";
+import type { RlmEmitter } from "../tool/rlm-events.ts";
 import { PythonSandbox } from "../sandbox/sandbox.ts";
 import type { ProposedDiffEdit, ProposedEdit } from "../sandbox/protocol.ts";
 import { advancePhase as validatePhaseTransition, phaseGatePrompt, type PhaseState } from "./pipeline.ts";
@@ -87,7 +87,7 @@ export interface EngineDeps extends InteractiveDeps {
   limits?: Limits;
   signal?: AbortSignal;
   /** Live RlmDetails reporting via onUpdate. Required — replaces SubcallObserver. */
-  bridge: RlmToolBridge;
+  emitter: RlmEmitter;
   /** Called with each completion's usage (root + sub-LLM) for cost/token rollups. */
   onUsage?: (usage: Usage, role: "root" | "sub") => void;
   /** Called after rlm_edit validates and before the worker records the diff. */
@@ -98,7 +98,7 @@ export interface EngineDeps extends InteractiveDeps {
 
 /** Build a `runRlm` bound to the given deps. The returned function is reused for recursion. */
 export function createEngine(deps: EngineDeps): RunRlm {
-  const { bridge } = deps;
+  const { emitter } = deps;
   const run: RunRlm = async (input: RlmInput): Promise<RlmResult> => {
     const nowIso = (): string => new Date().toISOString(); // local helper — 4 call sites below
     const persist = input.depth === 0 && deps.runState !== undefined;
@@ -113,14 +113,14 @@ export function createEngine(deps: EngineDeps): RunRlm {
     // For depth 0, input.parentNodeId is undefined — engine uses root-level bridge methods.
     const selfReportId = input.depth === 0 ? undefined : input.parentNodeId;
     if (!selfReportId) {
-      bridge.setRootPrompt(input.rootPrompt ? input.rootPrompt.slice(0, 60) : String(input.context).slice(0, 60));
-      bridge.setTurn(0, deps.config.maxIterations);
+      emitter.emitRootPrompt(input.rootPrompt ? input.rootPrompt.slice(0, 60) : String(input.context).slice(0, 60));
+      emitter.emitTurn(0, deps.config.maxIterations);
     }
 
     const overrideModel = input.smartModelOverride ? resolveModelId(deps.registry, input.smartModelOverride) : undefined;
     if (input.smartModelOverride && !overrideModel) {
-      if (selfReportId) bridge.updateSubcall(selfReportId, { status: "error", detail: "unknown model override" });
-      else bridge.complete("error");
+      if (selfReportId) emitter.emitSubcallUpdated({ id: selfReportId, status: "error", detail: "unknown model override" });
+      else emitter.emitStatus("error");
       return {
         answer: `Error: unknown model override '${input.smartModelOverride}'`,
         edits: [],
@@ -155,14 +155,14 @@ export function createEngine(deps: EngineDeps): RunRlm {
         limits.addUsage(u);
         deps.onUsage?.(u, "sub");
       },
-      bridge,
+      emitter,
       parentId: selfReportId,
       depth: input.depth,
     });
     const rlm = createRlmHandlers({
       run,
       llm,
-      bridge,
+      emitter,
       maxDepth: deps.config.maxDepth,
       maxConcurrent: deps.config.maxConcurrentSubcalls,
       parentNodeId: selfReportId,
@@ -221,7 +221,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
         ? createFsBridge(input.workspaceRoot, {
             signal: deps.signal,
             initialFiles: fsInitialFiles,
-            bridge,
+            emitter,
             parentId: selfReportId,
             depth: input.depth,
             limits: deps.config.fsLimits,
@@ -263,7 +263,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
           });
           if (!ok) persistOn = false;
         },
-        bridge,
+        emitter,
         depth: input.depth,
         parentId: selfReportId,
       });
@@ -314,8 +314,8 @@ export function createEngine(deps: EngineDeps): RunRlm {
         await sandbox.restore(snapshotPath(deps.runState.cwd, deps.runState.dir, runId, input.resume.snapshotTurn), sessionNonce);
       for (let i = startTurn; i < deps.config.maxIterations; i++) {
         limits.checkTimeout();
-        if (selfReportId) bridge.updateSubcall(selfReportId, { detail: `turn ${i + 1}/${deps.config.maxIterations}` });
-        else bridge.setTurn(i + 1, deps.config.maxIterations);
+        if (selfReportId) emitter.emitSubcallUpdated({ id: selfReportId, detail: `turn ${i + 1}/${deps.config.maxIterations}` });
+        else emitter.emitTurn(i + 1, deps.config.maxIterations);
 
         if (pendingReplOutputs) {
           appendUserMessage(history, pendingReplOutputs);
@@ -361,11 +361,11 @@ export function createEngine(deps: EngineDeps): RunRlm {
           ? turn.blocks.map((b) => previewText(b, 400)).join("\n")
           : previewText(turn.response, 400);
         if (selfReportId) {
-          bridge.updateSubcall(selfReportId, { args: `▶ ${allBlocks}`, resultPreview: previewStdout(turn.results) });
+          emitter.emitSubcallUpdated({ id: selfReportId, args: `▶ ${allBlocks}`, resultPreview: previewStdout(turn.results) });
         }
         limits.addUsage(turn.usage);
-        if (selfReportId) bridge.updateSubcall(selfReportId, { costUsd: turn.usage.cost.total, tokens: turn.usage.totalTokens });
-        else bridge.addRootUsage(turn.usage.cost.total, turn.usage.totalTokens);
+        if (selfReportId) emitter.emitSubcallUpdated({ id: selfReportId, costUsd: turn.usage.cost.total, tokens: turn.usage.totalTokens });
+        else emitter.emitRootUsage(turn.usage.cost.total, turn.usage.totalTokens);
         deps.onUsage?.(turn.usage, "root");
         const answerContent = latestAnswerContentOf(turn.results);
         if (answerContent) best = answerContent;
@@ -432,15 +432,16 @@ export function createEngine(deps: EngineDeps): RunRlm {
       throw err;
     } finally {
       if (selfReportId) {
-        bridge.updateSubcall(selfReportId, {
+        emitter.emitSubcallUpdated({
+          id: selfReportId,
           status: nodeStatus,
           resultPreview: nodeStatus === "error" ? undefined : previewText(lastAnswer),
           detail: nodeStatus === "error" ? "stopped" : undefined,
         });
       } else {
-        if (nodeStatus !== "error" && lastAnswer) bridge.setAnswer(previewText(lastAnswer));
-        bridge.setEdits(editsAcc.length > 0 ? editsAcc : []);
-        bridge.complete(nodeStatus === "error" ? "error" : "done");
+        if (nodeStatus !== "error" && lastAnswer) emitter.emitAnswer(previewText(lastAnswer));
+        emitter.emitEdits(editsAcc.length > 0 ? editsAcc : []);
+        emitter.emitStatus(nodeStatus === "error" ? "error" : "done");
       }
       await sandbox?.dispose();
     }

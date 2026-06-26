@@ -8,7 +8,7 @@
 
 import type { RunRlm } from "../core/types.ts";
 import type { LlmBridge } from "./llm-query.ts";
-import type { RlmToolBridge } from "../tool/rlm-details.ts";
+import type { RlmEmitter } from "../tool/rlm-events.ts";
 import { mapPool } from "../util/concurrency.ts";
 
 export interface RlmHandlers {
@@ -20,7 +20,7 @@ export interface RlmBridgeOptions {
   run: RunRlm;
   llm: LlmBridge;
   /** Live RlmDetails reporting via onUpdate. Required — replaces SubcallObserver for recursive subcalls. */
-  bridge: RlmToolBridge;
+  emitter: RlmEmitter;
   maxDepth: number;
   maxConcurrent: number;
   /** Parent subcall ID that this run is attached under. */
@@ -45,7 +45,7 @@ export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
       // (reference: _subcall checks remaining_budget/timeout before spawning).
       if (rem.budgetUsd !== undefined && rem.budgetUsd <= 0) return "Error: budget exhausted";
       if (rem.timeoutMs !== undefined && rem.timeoutMs <= 0) return "Error: timeout exhausted";
-      subId = opts.bridge.addSubcall({
+      subId = opts.emitter.emitSubcallCreated({
         kind: "rlm", parentId: opts.parentNodeId, label: "rlm_query",
         model: model ?? undefined, detail: prompt.slice(0, 60),
         depth: childDepth,
@@ -61,13 +61,13 @@ export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
         workspaceRoot: opts.workspaceRoot,
       });
       opts.onChildUsage?.(res.costUsd, res.inputTokens, res.outputTokens);
-      opts.bridge.updateSubcall(subId, {
+      opts.emitter.emitSubcallUpdated({ id: subId,
         status: "done", resultPreview: res.answer.slice(0, 200),
       });
       return res.answer;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (subId) opts.bridge.updateSubcall(subId, { status: "error", detail: msg });
+      if (subId) opts.emitter.emitSubcallUpdated({ id: subId, status: "error", detail: msg });
       return `Error: child RLM failed - ${msg}`;
     }
   }

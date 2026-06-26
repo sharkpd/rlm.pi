@@ -2,7 +2,7 @@
  * RLM tool — registers the RLM engine as a Pi tool with inline rendering.
  *
  * Modeled after rpiv-mono's subagent tool.
- * The tool's execute() wraps createEngine() with an RlmToolBridge that feeds
+ * The tool's execute() wraps createEngine() with an RlmEmitter + RlmEventAggregator that feeds
  * onUpdate(partialResult) for progressive TUI re-rendering.
  */
 
@@ -14,7 +14,9 @@ import { createPiInteractiveDeps } from "../bridge/pi-interactive.ts";
 import type { RlmController, StartInput } from "../mode/rlm-mode.ts";
 import { createTelemetrySink } from "../telemetry/index.ts";
 import { formatCost, formatDuration, formatTokens, spinnerFrame } from "../ui/theme.ts";
-import { RlmToolBridge, type RlmDetails, type RlmSubcall } from "./rlm-details.ts";
+import { type RlmDetails, type RlmSubcall } from "./rlm-details.ts";
+import { RlmEmitter } from "./rlm-events.ts";
+import { RlmEventAggregator } from "./rlm-aggregator.ts";
 
 // ── Parameter schema ──
 
@@ -77,8 +79,11 @@ export function createRlmTool(controller: RlmController): ToolDefinition<typeof 
       const params = rawParams; // narrowed by Value.Check
 
       const sink = await createTelemetrySink(controller.config.telemetry);
-      const bridge = new RlmToolBridge(onUpdate ?? (() => {}), sink);
-      bridge.setRootPrompt(params.prompt);
+      const emitter = new RlmEmitter();
+      const aggregator = new RlmEventAggregator(emitter, onUpdate ?? (() => {}));
+      let detachSink: (() => void) | undefined;
+      if (sink) detachSink = emitter.attachSink(sink);
+      emitter.emitRootPrompt(params.prompt);
 
       // Wire abort signal to controller
       if (signal) {
@@ -89,7 +94,7 @@ export function createRlmTool(controller: RlmController): ToolDefinition<typeof 
       let spinnerHandle: ReturnType<typeof setInterval> | undefined;
       if (onUpdate) {
         spinnerHandle = setInterval(() => {
-          const snap = bridge.snapshot();
+          const snap = aggregator.getState();
           if (snap.status !== "running") { clearInterval(spinnerHandle); spinnerHandle = undefined; return; }
           onUpdate({ content: [{ type: "text", text: `${spinnerFrame()} RLM running…` }], details: snap });
         }, 100);
@@ -102,28 +107,31 @@ export function createRlmTool(controller: RlmController): ToolDefinition<typeof 
           context: params.context ?? "",
         };
         const interactive = createPiInteractiveDeps(ctx);
-        const { done } = controller.start(ctx, input, bridge, {
+        const { done } = controller.start(ctx, input, emitter, {
           onAskUserQuestion: controller.config.askUserQuestion ? interactive.onAskUserQuestion : undefined,
           onTodo: controller.config.todo ? interactive.onTodo : undefined,
         });
         const result = await done;
 
-        bridge.setAnswer(result.answer);
-        if (result.edits && result.edits.length > 0) bridge.setEdits(result.edits);
+        emitter.emitAnswer(result.answer);
+        if (result.edits && result.edits.length > 0) emitter.emitEdits(result.edits);
 
         return {
           content: [{ type: "text", text: result.answer }],
-          details: bridge.snapshot(),
+          details: aggregator.getState(),
         };
       } catch (e) {
-        bridge.complete("error");
+        emitter.emitStatus("error");
         const msg = `RLM failed: ${e instanceof Error ? e.message : String(e)}`;
         return {
           content: [{ type: "text", text: msg }],
-          details: bridge.snapshot(),
+          details: aggregator.getState(),
         };
       } finally {
         if (spinnerHandle) clearInterval(spinnerHandle);
+        detachSink?.();
+        aggregator.dispose();
+        emitter.shutdown();
         try { await sink?.shutdown(); }
         catch (err) { console.warn(`[rlm] telemetry shutdown failed: ${err instanceof Error ? err.message : String(err)}`); }
       }

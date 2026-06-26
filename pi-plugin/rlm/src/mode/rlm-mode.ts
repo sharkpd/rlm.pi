@@ -16,7 +16,7 @@ import type { InteractiveDeps, RlmConfig, RlmInput, RlmResult } from "../core/ty
 import type { ReconstructResult } from "../state/resume.ts";
 import { renderUnifiedDiffRequestPreview } from "../text/edit-preview.ts";
 import { contextLength } from "../text/tokens.ts";
-import { RlmToolBridge } from "../tool/rlm-details.ts";
+import { RlmEmitter } from "../tool/rlm-events.ts";
 
 export function cheapestModel(registry: ModelRegistry): Model<Api> | undefined {
   const models = registry.getAvailable();
@@ -96,7 +96,7 @@ export class RlmController {
     return { smart, worker };
   }
 
-  start(ctx: ExtensionContext, input: StartInput, bridge?: RlmToolBridge, interactive?: InteractiveDeps): RunHandle {
+  start(ctx: ExtensionContext, input: StartInput, emitter?: RlmEmitter, interactive?: InteractiveDeps): RunHandle {
     const models = this.resolveModels(ctx);
     if (!models) throw new Error("no model with configured auth is available");
     if (this.active) throw new Error("RLM run already in progress"); // QC: mutual-exclusion guard
@@ -136,7 +136,7 @@ export class RlmController {
         registry: ctx.modelRegistry,
         config: this.config,
         signal: abortController.signal,
-        bridge: bridge ?? new RlmToolBridge(() => {}),
+        emitter: emitter ?? new RlmEmitter(),
         runState,
         onAskUserQuestion: interactive?.onAskUserQuestion,
         onTodo: interactive?.onTodo,

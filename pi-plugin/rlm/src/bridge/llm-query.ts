@@ -1,7 +1,7 @@
 /**
  * The `llm_query` / `llm_query_batched` bridge: turns sandbox sub-LLM interrupts into
  * real (serverless) completions on the configured *worker* model, reporting each call to the
- * RlmToolBridge for progressive TUI re-rendering.
+ * RlmEmitter for progressive TUI re-rendering.
  *
  * Caps enforce the divide-and-conquer budget from the RLM method: per-prompt size and batch
  * fan-out are bounded, and batches run through a fixed-size concurrency pool.
@@ -9,7 +9,7 @@
 
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { RlmToolBridge } from "../tool/rlm-details.ts";
+import type { RlmEmitter } from "../tool/rlm-events.ts";
 import { resolveModelId } from "../config/settings.ts";
 import type { Sampling } from "../core/types.ts";
 import { type ChatMsg, modelComplete } from "./model.ts";
@@ -26,7 +26,7 @@ export interface LlmBridgeOptions {
   signal?: AbortSignal;
   onUsage?: (usage: Usage, model: Model<Api>) => void;
   /** Live RlmDetails reporting via onUpdate. */
-  bridge?: RlmToolBridge;
+  emitter?: RlmEmitter;
   parentId?: string;
   depth?: number;
 }
@@ -42,7 +42,7 @@ export interface LlmBridge {
 export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
   const maxPromptChars = opts.maxPromptChars ?? DEFAULT_MAX_PROMPT_CHARS;
   const maxConcurrent = opts.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
-  const { bridge } = opts;
+  const { emitter } = opts;
 
   // Run one completion; report cost/tokens via `track` (a per-call or per-batch accumulator).
   async function complete1(prompt: string, model: string | null, track: (u: Usage) => void): Promise<string> {
@@ -72,10 +72,10 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
 
   return {
     async llmQuery(prompt, model) {
-      const id = bridge?.addSubcall({
+      const id = emitter?.emitSubcallCreated({
         kind: "llm", parentId: opts.parentId, label: "llm_query",
         model: opts.workerModel.id, args: `prompt: ${previewText(prompt)}`,
-        depth: opts.depth,
+        depth: opts.depth ?? 0,
       });
       let cost = 0;
       let tokens = 0;
@@ -83,7 +83,7 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
         cost += u.cost.total;
         tokens += u.totalTokens;
       });
-      if (bridge && id !== undefined) bridge.updateSubcall(id, {
+      if (emitter && id !== undefined) emitter.emitSubcallUpdated({ id,
         status: out.startsWith("Error:") ? "error" : "done",
         costUsd: cost, tokens, resultPreview: previewText(out),
         detail: out.startsWith("Error:") ? out : undefined,
@@ -92,10 +92,10 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
     },
 
     async llmQueryBatched(prompts, model) {
-      const id = bridge?.addSubcall({
+      const id = emitter?.emitSubcallCreated({
         kind: "batch", parentId: opts.parentId, label: `llm_query ×${prompts.length}`,
         model: opts.workerModel.id, args: `prompt: ${previewText(prompts[0] ?? "")}`,
-        depth: opts.depth,
+        depth: opts.depth ?? 0,
       });
       let cost = 0;
       let tokens = 0;
@@ -111,7 +111,7 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
         : failed > 0 ? `${failed}/${out.length} sub-calls failed` : undefined;
       const firstPreview = previewText(out[0] ?? "");
       const resultPreview = out.length > 1 ? `${firstPreview}  (+${out.length - 1} more)` : firstPreview;
-      if (bridge && id !== undefined) bridge.updateSubcall(id, {
+      if (emitter && id !== undefined) emitter.emitSubcallUpdated({ id,
         status: error ? "error" : "done", costUsd: cost, tokens,
         resultPreview, detail: error,
       });

@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { DEFAULT_CONFIG } from "../config/defaults.ts";
 import type { FsLimits } from "../core/types.ts";
-import type { RlmToolBridge } from "../tool/rlm-details.ts";
+import type { RlmEmitter } from "../tool/rlm-events.ts";
 import { validateAnchorEdit, validateAnchorEditSet, type AnchorEdit } from "../text/edits.ts";
 
 const execFileP = promisify(execFile);
@@ -52,7 +52,7 @@ export interface FsBridgeOptions {
   signal?: AbortSignal;
   commandTimeoutMs?: number;
   initialFiles?: string[];
-  bridge?: RlmToolBridge;
+  emitter?: RlmEmitter;
   parentId?: string;
   depth?: number;
   limits?: FsLimits;
@@ -318,7 +318,7 @@ function previewFind(out: string): string {
 
 export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBridge {
   const opts = commandOptions(fsOpts);
-  const bridge = fsOpts.bridge;
+  const emitter = fsOpts.emitter;
   let rootRealPromise: Promise<string> | undefined;
   let fileListPromise: Promise<string[]> | undefined;
 
@@ -339,7 +339,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
   return {
     async readFile(path, start, end) {
       const args = start != null || end != null ? `${path}:${start ?? ""}-${end ?? ""}` : path;
-      const id = bridge?.addSubcall({ kind: "tool", parentId: fsOpts.parentId, label: "read_file", args, depth: fsOpts.depth });
+      const id = emitter?.emitSubcallCreated({ kind: "tool", parentId: fsOpts.parentId, label: "read_file", args, depth: fsOpts.depth ?? 0 });
       let out: string;
       try {
         const abs = await safeRealPath(root, path, opts, await rootReal());
@@ -359,7 +359,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
       } catch (e) {
         out = isEnoent(e) ? `Error: ${missingFileMessage(path)}` : `Error: ${errorMessage(e)}`;
       }
-      if (bridge && id !== undefined) bridge.updateSubcall(id, {
+      if (emitter && id !== undefined) emitter.emitSubcallUpdated({ id,
         status: isErr(out) ? "error" : "done",
         detail: isErr(out) ? out : undefined,
         resultPreview: previewRead(out),
@@ -368,7 +368,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
     },
 
     async proposeEdit(path, oldText, newText, existingEdits) {
-      const id = bridge?.addSubcall({ kind: "tool", parentId: fsOpts.parentId, label: "propose_edit", args: path, depth: fsOpts.depth });
+      const id = emitter?.emitSubcallCreated({ kind: "tool", parentId: fsOpts.parentId, label: "propose_edit", args: path, depth: fsOpts.depth ?? 0 });
       let out: string;
       try {
         const abs = await safeRealPath(root, path, opts, await rootReal());
@@ -389,7 +389,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
       } catch (e) {
         out = isEnoent(e) ? `Error: ${missingFileMessage(path)}` : `Error: ${errorMessage(e)}`;
       }
-      if (bridge && id !== undefined) bridge.updateSubcall(id, {
+      if (emitter && id !== undefined) emitter.emitSubcallUpdated({ id,
         status: isErr(out) ? "error" : "done",
         detail: isErr(out) ? out : undefined,
         resultPreview: out,
@@ -399,7 +399,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
 
     async grep(pattern, glob, maxMatches) {
       const cap = Math.min(Math.max(maxMatches ?? opts.limits.grepDefaultMaxMatches, 1), opts.limits.grepMaxMatchesCeiling);
-      const id = bridge?.addSubcall({ kind: "tool", parentId: fsOpts.parentId, label: "grep", args: `"${pattern}" ${glob ?? "**/*"} (max ${cap})`, depth: fsOpts.depth });
+      const id = emitter?.emitSubcallCreated({ kind: "tool", parentId: fsOpts.parentId, label: "grep", args: `"${pattern}" ${glob ?? "**/*"} (max ${cap})`, depth: fsOpts.depth ?? 0 });
       let out: string;
       try {
         const args = ["--line-number", "--no-heading", "--color=never"];
@@ -420,7 +420,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
           }
         }
       }
-      if (bridge && id !== undefined) bridge.updateSubcall(id, {
+      if (emitter && id !== undefined) emitter.emitSubcallUpdated({ id,
         status: isErr(out) ? "error" : "done",
         detail: isErr(out) ? out : undefined,
         resultPreview: previewGrep(out),
@@ -429,7 +429,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
     },
 
     async find(glob) {
-      const id = bridge?.addSubcall({ kind: "tool", parentId: fsOpts.parentId, label: "find", args: glob ?? "**/*", depth: fsOpts.depth });
+      const id = emitter?.emitSubcallCreated({ kind: "tool", parentId: fsOpts.parentId, label: "find", args: glob ?? "**/*", depth: fsOpts.depth ?? 0 });
       let out: string;
       try {
         let files = await projectFiles();
@@ -444,7 +444,7 @@ export function createFsBridge(root: string, fsOpts: FsBridgeOptions = {}): FsBr
       } catch (e) {
         out = `Error: ${errorMessage(e)}`;
       }
-      if (bridge && id !== undefined) bridge.updateSubcall(id, {
+      if (emitter && id !== undefined) emitter.emitSubcallUpdated({ id,
         status: isErr(out) ? "error" : "done",
         detail: isErr(out) ? out : undefined,
         resultPreview: previewFind(out),

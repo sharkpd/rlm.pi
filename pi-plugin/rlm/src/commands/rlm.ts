@@ -18,7 +18,8 @@ import { reconstructRlmState } from "../state/resume.ts";
 import type { ReconstructResult } from "../state/resume.ts";
 import type { RunHeader } from "../state/rows.ts";
 import { buildRlmSystemPrompt } from "../prompts/system.ts";
-import { RlmToolBridge } from "../tool/rlm-details.ts";
+import { RlmEmitter } from "../tool/rlm-events.ts";
+import { RlmEventAggregator } from "../tool/rlm-aggregator.ts";
 import { createTelemetrySink } from "../telemetry/index.ts";
 
 interface PreparedFileEdit {
@@ -291,22 +292,27 @@ async function executeRlmRunWithResume(
 ): Promise<void> {
   let handle: RunHandle | undefined;
   let sink: Awaited<ReturnType<typeof createTelemetrySink>>;
+  let emitter: RlmEmitter | undefined;
+  let detachSink: (() => void) | undefined;
+  let aggregator: RlmEventAggregator | undefined;
   try {
     sink = await createTelemetrySink(controller.config.telemetry);
-    const bridge = new RlmToolBridge((partial) => {
+    emitter = new RlmEmitter();
+    if (sink) detachSink = emitter.attachSink(sink);
+    aggregator = new RlmEventAggregator(emitter, (partial) => {
       const d = partial.details;
       if (!d) return;
       const turn = d.turns.max > 0 ? ` · turn ${d.turns.current}/${d.turns.max}` : "";
       const cost = d.totals.costUsd > 0 ? ` · $${d.totals.costUsd.toFixed(4)}` : "";
       const glyph = d.status === "running" ? "⏳" : d.status === "done" ? "✓" : "✗";
       ctx.ui.setWidget?.("rlm-status", [`${glyph} RLM resume${turn}${cost}`], { placement: "aboveEditor" });
-    }, sink);
-    bridge.setRootPrompt(header.rootPrompt);
+    });
+    emitter.emitRootPrompt(header.rootPrompt);
     const interactive = createPiInteractiveDeps(ctx);
     if (controller.config.todo) {
       for (const row of recon.todoRows) await interactive.onTodo?.(row.action, row.params);
     }
-    handle = controller.start(ctx, { kind: "resume", resume: recon, context }, bridge, {
+    handle = controller.start(ctx, { kind: "resume", resume: recon, context }, emitter, {
       onAskUserQuestion: controller.config.askUserQuestion ? interactive.onAskUserQuestion : undefined,
       onTodo: controller.config.todo ? interactive.onTodo : undefined,
     });
@@ -331,6 +337,9 @@ async function executeRlmRunWithResume(
   } finally {
     clearRlmStatus(ctx.ui);
     ctx.ui.setWidget?.("rlm-status", undefined);
+    detachSink?.();
+    aggregator?.dispose();
+    emitter?.shutdown();
     try { await sink?.shutdown(); } catch { /* best-effort */ }
   }
 }

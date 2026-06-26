@@ -1,12 +1,12 @@
 import type { AskAnswer, AskQuestion } from "../sandbox/protocol.ts";
 import type { SubLlmHandlers } from "../sandbox/sandbox.ts";
-import type { RlmToolBridge } from "../tool/rlm-details.ts";
+import type { RlmEmitter } from "../tool/rlm-events.ts";
 
 export interface InteractiveBridgeOpts {
   onAskUserQuestion?: (questions: readonly AskQuestion[]) => Promise<AskAnswer[]>;
   onTodo?: (action: string, params: Record<string, unknown>) => Promise<string>;
   onTodoRow?: (action: string, params: Record<string, unknown>, result: string) => void;
-  bridge?: RlmToolBridge;
+  emitter?: RlmEmitter;
   depth: number;
   parentId?: string;
 }
@@ -23,7 +23,7 @@ export function buildInteractiveHandlers(opts: InteractiveBridgeOpts): {
         custom: "Error: ask_user_question not available inside rlm_query sub-calls",
       }));
 
-      const id = opts.bridge?.addSubcall({
+      const id = opts.emitter?.emitSubcallCreated({
         kind: "tool", parentId: opts.parentId,
         label: "ask_user_question",
         args: `${questions.length} question(s)`,
@@ -33,16 +33,16 @@ export function buildInteractiveHandlers(opts: InteractiveBridgeOpts): {
         const cb = opts.onAskUserQuestion;
         if (!cb) throw new Error("ask_user_question not configured (no onAskUserQuestion callback)");
         const answers = await cb(questions);
-        if (id) opts.bridge?.updateSubcall(id, { status: "done" });
+        if (id) opts.emitter?.emitSubcallUpdated({ id, status: "done" });
         return answers;
       } catch (err) {
-        if (id) opts.bridge?.updateSubcall(id, { status: "error", detail: String(err) });
+        if (id) opts.emitter?.emitSubcallUpdated({ id, status: "error", detail: String(err) });
         throw err;
       }
     },
 
     async todo(action, params, depth) {
-      const id = opts.bridge?.addSubcall({
+      const id = opts.emitter?.emitSubcallCreated({
         kind: "tool", parentId: opts.parentId,
         label: `todo:${action}`,
         args: params.subject ? String(params.subject) : String(params.id ?? ""),
@@ -53,10 +53,10 @@ export function buildInteractiveHandlers(opts: InteractiveBridgeOpts): {
         if (!cb) throw new Error("todo not configured (no onTodo callback)");
         const result = await cb(action, params);
         opts.onTodoRow?.(action, params, result);
-        if (id) opts.bridge?.updateSubcall(id, { status: "done", resultPreview: result.slice(0, 80) });
+        if (id) opts.emitter?.emitSubcallUpdated({ id, status: "done", resultPreview: result.slice(0, 80) });
         return result;
       } catch (err) {
-        if (id) opts.bridge?.updateSubcall(id, { status: "error", detail: String(err) });
+        if (id) opts.emitter?.emitSubcallUpdated({ id, status: "error", detail: String(err) });
         throw err;
       }
     },

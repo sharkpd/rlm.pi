@@ -18,7 +18,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createEngine } from "../src/core/engine.ts";
-import { RlmToolBridge } from "../src/tool/rlm-details.ts";
+import { RlmEmitter } from "../src/tool/rlm-events.ts";
 import { loadSettings, mergeConfig } from "../src/config/settings.ts";
 import { cheapestModel } from "../src/mode/rlm-mode.ts";
 import rlmExtension from "../src/index.ts";
@@ -97,7 +97,7 @@ async function main() {
   // model behaviour, proving the root guards fire (the engine stops with a partial/stop answer).
   const baseCfg = mergeConfig(loadSettings().config);
   const limEngine = createEngine({
-    bridge: new RlmToolBridge(() => {}),
+    emitter: new RlmEmitter(),
     smartModel: model,
     workerModel: cheapestModel(modelRegistry) ?? model,
     registry: modelRegistry,
