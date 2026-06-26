@@ -5,6 +5,7 @@
  */
 
 import { PythonSandbox, type SubLlmHandlers } from "./sandbox.ts";
+import type { ReplResult } from "./protocol.ts";
 
 /** Static configuration for sandbox creation — set once, reused across getOrCreate calls. */
 export interface SandboxManagerConfig {
@@ -21,7 +22,7 @@ export class SandboxManager {
   private initPromise: Promise<PythonSandbox> | null = null;
   /** Serialized execution queue — concurrent repl() calls wait for predecessor. */
   private execQueue: Promise<void> = Promise.resolve();
-  private executing = false;
+  private pendingExecCount = 0;
   /** Context payload to load on first sandbox creation. Set externally before getOrCreate. */
   contextPayload: unknown = null;
 
@@ -69,18 +70,33 @@ export class SandboxManager {
    * (second call waits for first to complete, no interleaving). On failure,
    * nullifies the sandbox so the next call recreates it (death-recreate).
    */
-  async exec(code: string): Promise<import("./protocol.ts").ReplResult> {
+  async exec(code: string): Promise<ReplResult> {
+    return this.execQueued(code);
+  }
+
+  /**
+   * Execute code after running setup inside the serialized execution slot.
+   * Use this for per-invocation handler state that must match the active REPL run.
+   */
+  async execWithSetup(code: string, setup: () => void): Promise<ReplResult> {
+    return this.execQueued(code, setup);
+  }
+
+  private async execQueued(code: string, setup?: () => void): Promise<ReplResult> {
     if (!this.sandbox) throw new Error("Sandbox not initialized — call getOrCreate first");
 
     // Serialize: queue behind any in-flight execution
     const prev = this.execQueue;
-    let resolveNext: () => void;
+    let resolveNext: () => void = () => {};
     this.execQueue = new Promise<void>((r) => { resolveNext = r; });
-    this.executing = true;
+    this.pendingExecCount++;
     await prev;
 
     try {
-      return await this.sandbox.exec(code);
+      const sandbox = this.sandbox;
+      if (!sandbox) throw new Error("Sandbox not initialized — previous execution disposed it");
+      setup?.();
+      return await sandbox.exec(code);
     } catch (err) {
       // Death-recreate: worker died — nullify so next repl() recreates
       if (this.sandbox) {
@@ -90,8 +106,8 @@ export class SandboxManager {
       }
       throw err;
     } finally {
-      this.executing = false;
-      resolveNext!();
+      this.pendingExecCount--;
+      resolveNext();
     }
   }
 
@@ -102,7 +118,7 @@ export class SandboxManager {
 
   /** True if a repl() execution is currently in-flight or queued. */
   get isExecuting(): boolean {
-    return this.executing;
+    return this.pendingExecCount > 0;
   }
 
   /** Idempotent dispose. Safe to call multiple times. */
