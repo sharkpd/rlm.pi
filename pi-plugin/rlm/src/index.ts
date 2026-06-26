@@ -44,9 +44,23 @@ export default function rlmExtension(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on("context", async (event) => ({
-    messages: event.messages.filter((message) => !(message.role === "custom" && message.customType === "rlm-intro")),
-  }));
+  pi.on("context", async (event) => {
+    const filtered = event.messages.filter(
+      (message) => !(message.role === "custom" && message.customType === "rlm-intro"),
+    );
+    if (!controller.enabled) return { messages: filtered };
+
+    // Inject a standing directive so Claude knows it must delegate via the rlm tool.
+    // Without this, Claude often handles requests directly using its own tools (e.g. zebra-mcp).
+    const directive = {
+      role: "user" as const,
+      content:
+        "[RLM MODE ACTIVE] You MUST call the `rlm` tool with the user's request as `prompt`. " +
+        "Do not read files, search, or use any other tool. Only call rlm.",
+      timestamp: 0,
+    } as (typeof filtered)[number];
+    return { messages: [directive, ...filtered] };
+  });
 
   pi.on("input", async (event, ctx) => {
     const text = event.text ?? "";
@@ -57,9 +71,11 @@ export default function rlmExtension(pi: ExtensionAPI): void {
       return { action: "handled" };
     }
 
-    // Route through the RLM tool: transform input so the agent calls the rlm tool.
-    // The tool's renderCall/renderResult replace the old rlm-question/rlm-answer messages.
-    return { action: "transform", text: `Use the rlm tool to handle this request: ${text}` };
+    // Route through the RLM tool: explicit JSON parameters + no-other-tools directive.
+    return {
+      action: "transform",
+      text: `[RLM] Call rlm({"prompt": ${JSON.stringify(text)}}) now. Do not use any other tools.`,
+    };
   });
 
   pi.on("session_shutdown", async () => {
