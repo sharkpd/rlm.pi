@@ -6,7 +6,7 @@ export const DEFAULT_RUN_DIR = join(tmpdir(), "rlm-runs");
 
 export const DEFAULT_CONFIG: RlmConfig = {
   enabled: true,
-  maxDepth: 2,
+  maxDepth: 4,
   maxIterations: 30,
   execTimeoutS: 120,
   requestTimeoutMs: 10 * 60_000,
