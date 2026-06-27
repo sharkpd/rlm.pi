@@ -28,6 +28,18 @@ function extractDiff(answer: string): string {
   return (match?.[1] ?? answer).trim();
 }
 
+/**
+ * Ensure the diff has a `--- a/path` / `+++ b/path` header.
+ * The model sometimes emits a bare `---` line with no filename; patch apply
+ * needs the path to locate the target file.
+ */
+function ensureDiffHeader(diff: string, filePath: string): string {
+  if (/^--- \S/m.test(diff)) return diff;
+  // Strip any bare `---` / `+++` lines the model may have put at the top
+  const body = diff.replace(/^[-+]{3}\s*\n/gm, "");
+  return `--- a/${filePath}\n+++ b/${filePath}\n${body}`;
+}
+
 // ── Parameter schema ──────────────────────────────────────────────────────
 
 const ProposeEditsParams = Object.freeze(Type.Object({
@@ -67,28 +79,42 @@ export function createProposeEditsTool(
       if (!validation.ok) return validation.error;
       const { path: filePath, instruction } = validation.value;
 
-      // Read the target file
+      if (!filePath || filePath === "undefined" || filePath === "null") {
+        return {
+          content: [{ type: "text", text: `propose_edits requires a valid file path, got: "${filePath}"` }],
+          details: { status: "error" },
+        };
+      }
+
+      // Read the target file — treat ENOENT as a new (empty) file so propose_edits
+      // can also create files from scratch.
       const abs = resolve(ctx.cwd ?? process.cwd(), filePath);
       let fileContent: string;
       try {
         fileContent = await readFile(abs, "utf8");
       } catch (e) {
-        return {
-          content: [{ type: "text", text: `Cannot read ${filePath}: ${errorMessage(e)}` }],
-          details: { status: "error" },
-        };
+        const isNotFound = (e as NodeJS.ErrnoException).code === "ENOENT";
+        if (!isNotFound) {
+          return {
+            content: [{ type: "text", text: `Cannot read ${filePath}: ${errorMessage(e)}` }],
+            details: { status: "error" },
+          };
+        }
+        fileContent = "";
       }
 
       // One engine run — the model negotiates generate→validate→revise itself
       // through llm_query inside the REPL, then returns the final diff.
-      const fileContext = [`File: ${filePath}`, "```", fileContent, "```"].join("\n");
+      const fileContext = fileContent
+        ? [`File: ${filePath}`, "```", fileContent, "```"].join("\n")
+        : `File: ${filePath} (new file — does not exist yet, create it from scratch)`;
       const rootPrompt = buildEditingRootPrompt(instruction);
 
       let diff: string;
       try {
         const handle = controller.start(ctx, { kind: "fresh", rootPrompt, context: fileContext });
         const rlmResult = await handle.done;
-        diff = extractDiff(rlmResult.answer);
+        diff = ensureDiffHeader(extractDiff(rlmResult.answer), filePath);
       } catch (e) {
         return {
           content: [{ type: "text", text: `Negotiation failed: ${errorMessage(e)}` }],
