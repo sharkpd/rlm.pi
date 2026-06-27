@@ -182,6 +182,7 @@ function nativeReplGlossary(): string {
     "| `repl({code})` | Need to chunk/delegate `context` to sub-LLMs; need Python scripting; need REPL state across calls |",
     "| `read` / `grep` | Inspect a few specific files directly; small codebase |",
     "| `zebra-mcp` | Semantic search over the codebase |",
+    "| `propose_edits({path, instruction})` | Modify any file — runs generate→validate→revise with patch preview |",
     "| `llm_query` (inside repl) | Extract, summarize, or classify a chunk of text |",
     "| `rlm_query` (inside repl) | Complex sub-task needing iterative reasoning with its own REPL |",
     "| `todo` (inside repl) | Track multi-step progress visibly to the user |",
@@ -237,6 +238,10 @@ export function buildNativeSystemPrompt(): string {
     "All file content is pre-loaded in the REPL `context` variable. Use ONLY `repl({code})`.",
     "You may read at most 2 hub files directly (README.md, package.json) for quick orientation.",
     "If sub-LLM credits are exhausted → report the error to the user and stop.",
+    "",
+    "ABSOLUTE RESTRICTION: Do NOT use `write` or `edit` to modify files directly.",
+    "All file modifications MUST go through propose_edits({path, instruction}).",
+    "It runs a generate→validate→revise loop and shows a patch preview before writing to disk.",
     "",
     nativeReplGlossary(),
   ].join("\n");

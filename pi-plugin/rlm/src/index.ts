@@ -17,7 +17,7 @@ import { packRepository, formatForLLM, serializeForSandbox } from "./context/rep
 import { buildNativeSystemPrompt } from "./prompts/system.ts";
 import { errorMessage } from "./util/errors.ts";
 
-const BLOCKED_NATIVE_TOOLS = Object.freeze(new Set(["read", "grep", "bash"]));
+const BLOCKED_NATIVE_TOOLS = Object.freeze(new Set(["read", "grep", "bash", "write", "edit"]));
 
 export default function rlmExtension(pi: ExtensionAPI): void {
   void setupRlmExtension(pi).catch((error) => {
@@ -150,7 +150,7 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
     if (BLOCKED_NATIVE_TOOLS.has(event.toolName)) {
       return {
         block: true,
-        reason: "RLM mode active. Use repl({code}) to access the repository context. All files are pre-loaded in the REPL. If sub-LLM credits are exhausted, report to the user.",
+        reason: "RLM mode active. Use repl({code}) to read files and propose_edits({path, instruction}) to modify them. All files are pre-loaded in the REPL. If sub-LLM credits are exhausted, report to the user.",
       };
     }
   });
