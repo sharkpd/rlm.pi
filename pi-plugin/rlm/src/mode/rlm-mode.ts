@@ -34,9 +34,7 @@ export type StartInput =
   | { readonly kind: "resume"; readonly resume: ReconstructResult & { ok: true }; readonly context: unknown };
 
 export class RlmController {
-  smartModel: Model<Api> | undefined;
   workerModel: Model<Api> | undefined;
-  savedSmartRef: string | undefined;
   savedWorkerRef: string | undefined;
   private active: AbortController | null = null;
 
@@ -59,13 +57,12 @@ export class RlmController {
   }
 
   hasSavedModels(): boolean {
-    return Boolean(this.savedSmartRef || this.savedWorkerRef || this.smartModel || this.workerModel);
+    return Boolean(this.savedWorkerRef || this.workerModel);
   }
 
   async persist(): Promise<boolean> {
     return await saveSettings({
       config: this.config,
-      smart: modelRef(this.smartModel) ?? this.savedSmartRef,
       worker: modelRef(this.workerModel) ?? this.savedWorkerRef,
     });
   }
@@ -78,13 +75,12 @@ export class RlmController {
     this.active?.abort();
   }
 
-  resolveModels(ctx: ExtensionContext): { smart: Model<Api>; worker: Model<Api> } | undefined {
-    if (!this.smartModel && this.savedSmartRef) this.smartModel = resolveModelId(ctx.modelRegistry, this.savedSmartRef);
+  resolveModels(ctx: ExtensionContext): { model: Model<Api>; worker: Model<Api> } | undefined {
     if (!this.workerModel && this.savedWorkerRef) this.workerModel = resolveModelId(ctx.modelRegistry, this.savedWorkerRef);
-    const smart = this.smartModel ?? ctx.model ?? cheapestModel(ctx.modelRegistry);
-    if (!smart) return undefined;
-    const worker = this.workerModel ?? cheapestModel(ctx.modelRegistry) ?? smart;
-    return { smart, worker };
+    const model = ctx.model ?? cheapestModel(ctx.modelRegistry);
+    if (!model) return undefined;
+    const worker = this.workerModel ?? cheapestModel(ctx.modelRegistry) ?? model;
+    return { model, worker };
   }
 
   start(ctx: ExtensionContext, input: StartInput, emitter?: RlmEmitter, interactive?: InteractiveDeps): RunHandle {
@@ -127,7 +123,7 @@ export class RlmController {
         };
       }
       const engine = createEngine({
-        smartModel: models.smart,
+        model: models.model,
         workerModel: models.worker,
         registry: ctx.modelRegistry,
         config: this.config,

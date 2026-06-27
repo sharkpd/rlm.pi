@@ -89,7 +89,7 @@ async function testPhasePersistence(): Promise<void> {
       kind: "header", v: STATE_SCHEMA_VERSION, runId, ts: "2026-01-01T00:00:00Z",
       rootPrompt: "test",
       context: { type: "none", chars: 0, json: false },
-      models: { smart: "p/id", worker: "p/wid" },
+      models: { model: "p/id", worker: "p/wid" },
       meta: { maxIterations: 10, maxDepth: 2, orchestrator: false, pipeline: true },
     };
     if (!await writeContextSidecar(tmp, dir, runId, "test context", false)) {
@@ -161,7 +161,7 @@ async function testPhasePersistence(): Promise<void> {
     const v2Header: RunHeader = {
       kind: "header", v: 2, runId: v2RunId, ts: "2025-12-31T23:59:59Z",
       rootPrompt: "v2", context: { type: "none", chars: 0, json: false },
-      models: { smart: "p/id", worker: "p/wid" },
+      models: { model: "p/id", worker: "p/wid" },
       meta: { maxIterations: 5, maxDepth: 1, orchestrator: false },
     };
     await writeContextSidecar(tmp, dir, v2RunId, "v2 context", false);
@@ -177,12 +177,12 @@ async function testPhasePersistence(): Promise<void> {
     const v2Recon = await reconstructRlmState(tmp, dir, v2RunId, system);
     check("v2 trail fails version-mismatch", !v2Recon.ok && v2Recon.reason === "version-mismatch", v2Recon.ok ? "unexpected ok" : `${v2Recon.reason}: ${v2Recon.detail}`);
 
-    // Schema v4 header without phase rows
+    // Current-schema header without phase rows
     const v4RunId = "2026-06-01_12-00-00-cccc";
     const v4Header: RunHeader = {
-      kind: "header", v: 4, runId: v4RunId, ts: "2026-06-01T12:00:00Z",
+      kind: "header", v: STATE_SCHEMA_VERSION, runId: v4RunId, ts: "2026-06-01T12:00:00Z",
       rootPrompt: "v3", context: { type: "none", chars: 0, json: false },
-      models: { smart: "p/id", worker: "p/wid" },
+      models: { model: "p/id", worker: "p/wid" },
       meta: { maxIterations: 5, maxDepth: 1, orchestrator: false },
     };
     await writeContextSidecar(tmp, dir, v4RunId, "v4 context", false);
@@ -225,7 +225,7 @@ function testIntents(): void {
   check("isPhase rejects wrong kind", !isPhase({ kind: "turn", turn: 1, phase: "blueprint" }));
   check("isPhase rejects null", !isPhase(null));
   check("isPhase rejects string", !isPhase("phase"));
-  check("STATE_SCHEMA_VERSION = 4", STATE_SCHEMA_VERSION === 4, String(STATE_SCHEMA_VERSION));
+  check("STATE_SCHEMA_VERSION = 5", STATE_SCHEMA_VERSION === 5, String(STATE_SCHEMA_VERSION));
 }
 
 // ── Run ──

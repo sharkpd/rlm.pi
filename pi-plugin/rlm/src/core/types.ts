@@ -71,8 +71,8 @@ export interface RlmConfig {
   todo: boolean;
   /** Skip the patch-preview popup and apply proposed edits immediately. */
   yolo: boolean;
-  /** Sampling for the root smart model. */
-  smartReasoning?: ThinkingLevel;
+  /** ThinkingLevel for the root model (pi's default). */
+  rootReasoning?: ThinkingLevel;
   /** Sampling for sub-LLM (worker) calls. */
   subSampling: MutableSampling;
   /** Optional MLflow telemetry export configuration. Omitted by default. */
@@ -91,8 +91,8 @@ export interface RlmInput {
   readonly depth: number;
   /** AgentTree node to attach this run's node under (set when recursing). */
   readonly parentNodeId?: string;
-  /** "provider/id" — overrides deps.smartModel for this run (set by recursive rlm_query). */
-  readonly smartModelOverride?: string;
+  /** "provider/id" — overrides the root model for this run (set by recursive rlm_query). */
+  readonly modelOverride?: string;
   /** Remaining budget for this subtree (set by parent from its LimitGuard). */
   readonly remainingBudgetUsd?: number;
   /** Remaining timeout for this subtree (set by parent from its LimitGuard). */

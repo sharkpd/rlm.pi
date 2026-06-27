@@ -55,7 +55,7 @@ export function createRlmHandlers(opts: RlmBridgeOptions): RlmHandlers {
         context: prompt,
         depth: childDepth,
         parentNodeId: subId,
-        smartModelOverride: model ?? undefined,
+        modelOverride: model ?? undefined,
         remainingBudgetUsd: rem.budgetUsd,
         remainingTimeoutMs: rem.timeoutMs,
       });

@@ -1,7 +1,7 @@
 /**
  * `propose_edits` — the main-agent-facing editing tool.
  *
- * Runs ONE RLM engine turn: the smart model drives a generate→validate→revise
+ * Runs ONE RLM engine turn: the root model drives a generate→validate→revise
  * loop via `llm_query` from inside the REPL (RLM paper, Algorithm 1) and
  * returns the final unified diff through the `answer` object.
  *

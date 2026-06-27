@@ -181,7 +181,7 @@ async function main() {
     }
     const overrideEngine = createEngine({
     emitter: new RlmEmitter(),
-      smartModel: model,
+      model: model,
       workerModel: model,
       registry,
       config: DEFAULT_CONFIG,
@@ -190,7 +190,7 @@ async function main() {
       rootPrompt: "unused",
       context: "unused",
       depth: 0,
-      smartModelOverride: "missing/model",
+      modelOverride: "missing/model",
     });
     const ok = badOverride.answer === "Error: unknown model override 'missing/model'";
     console.log(`${ok ? "✓" : "✗"} rlm_query unknown model override returns an error`);
@@ -225,7 +225,7 @@ async function main() {
   let subUsd = 0;
   const engine = createEngine({
     emitter: new RlmEmitter(),
-    smartModel: smart,
+    model: smart,
     workerModel: worker,
     registry,
     config: { ...DEFAULT_CONFIG, maxIterations: 8, maxDepth: 2, execTimeoutS: 30 },

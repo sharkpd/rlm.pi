@@ -1,4 +1,4 @@
-/** Persist RLM settings (tunable config + chosen smart/worker model ids). */
+/** Persist RLM settings (tunable config + chosen worker model id). */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -9,7 +9,6 @@ import { DEFAULT_CONFIG } from "./defaults.ts";
 
 export interface PersistedSettings {
   readonly config: Partial<RlmConfig>;
-  readonly smart?: string;
   readonly worker?: string;
 }
 
@@ -100,7 +99,7 @@ function validateConfig(raw: unknown): Partial<RlmConfig> {
   if (compactionThresholdPct !== undefined && compactionThresholdPct <= 1) out.compactionThresholdPct = compactionThresholdPct;
   const python = validateString(r.python);
   if (python !== undefined) out.python = python;
-  if (typeof r.smartReasoning === "string") out.smartReasoning = r.smartReasoning as ThinkingLevel;
+  if (typeof r.rootReasoning === "string") out.rootReasoning = r.rootReasoning as ThinkingLevel;
   const telemetry = validateTelemetry(r.telemetry);
   if (telemetry) out.telemetry = telemetry;
   const runLog = validateRunLog(r.runLog);
@@ -133,7 +132,6 @@ export async function loadSettings(): Promise<PersistedSettings> {
     const r = raw as Record<string, unknown>;
     return {
       config: validateConfig(r.config),
-      smart: typeof r.smart === "string" ? r.smart : undefined,
       worker: typeof r.worker === "string" ? r.worker : undefined,
     };
   } catch {

@@ -29,7 +29,6 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
   const persisted = await loadSettings();
   const config = mergeConfig(persisted.config);
   const controller = new RlmController(config);
-  controller.savedSmartRef = persisted.smart;
   controller.savedWorkerRef = persisted.worker;
 
   // ── SandboxManager — persistent singleton for native-mode repl() ──
@@ -65,12 +64,7 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
   let guidePosted = false;
 
   pi.on("session_start", async (_event, ctx) => {
-    // Restore saved model refs for controller — invalidate if provider changed
-    if (controller.savedSmartRef) {
-      const resolved = resolveModelId(ctx.modelRegistry, controller.savedSmartRef);
-      if (resolved) controller.smartModel = resolved;
-      else controller.savedSmartRef = undefined; // provider gone, clear stale ref
-    }
+    // Restore saved worker ref — invalidate if provider changed
     if (controller.savedWorkerRef) {
       const resolved = resolveModelId(ctx.modelRegistry, controller.savedWorkerRef);
       if (resolved) controller.workerModel = resolved;
@@ -79,14 +73,14 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
 
     // Register repl tool with current models (re-registers each session for provider changes)
     const workerModel = controller.workerModel ?? cheapestModel(ctx.modelRegistry) ?? ctx.model;
-    const smartModel = controller.smartModel ?? ctx.model;
-    if (workerModel && smartModel) {
+    const model = ctx.model;
+    if (workerModel && model) {
       try {
         pi.registerTool(createReplTool({
           sandboxManager,
-          smartModel,
+          model,
           workerModel,
-          getSmartModel: () => controller.resolveModels(ctx)?.smart,
+          getModel: () => controller.resolveModels(ctx)?.model,
           getWorkerModel: () => controller.resolveModels(ctx)?.worker,
           registry: ctx.modelRegistry,
           config,

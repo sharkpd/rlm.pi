@@ -12,7 +12,7 @@ import type { ChatMsg } from "../bridge/model.ts";
 import type { ProposedEdit } from "../sandbox/protocol.ts";
 
 /** Bump when a row shape changes such that the resume fold cannot replay older files. */
-export const STATE_SCHEMA_VERSION = 4;
+export const STATE_SCHEMA_VERSION = 5;
 
 export interface UsageRow {
   readonly costUsd: number;
@@ -28,7 +28,7 @@ export interface RunHeader {
   readonly ts: string;
   readonly rootPrompt: string;
   readonly context: { readonly type: string; readonly chars: number; readonly json: boolean };
-  readonly models: { readonly smart: string; readonly worker: string };
+  readonly models: { readonly model: string; readonly worker: string };
   /** Snapshot of the replay-affecting config (maxIterations, orchestrator, pipeline…). */
   readonly meta: {
     readonly maxIterations: number;

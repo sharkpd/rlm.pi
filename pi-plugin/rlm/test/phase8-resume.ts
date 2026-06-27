@@ -44,7 +44,7 @@ async function main(): Promise<void> {
       kind: "header", v: STATE_SCHEMA_VERSION, runId, ts: new Date().toISOString(),
       rootPrompt: "test resume prompt",
       context: { type: "str", chars: contextText.length, json: false },
-      models: { smart: "test/smart", worker: "test/worker" },
+      models: { model: "test/smart", worker: "test/worker" },
       meta: { maxIterations: 30, maxDepth: 2, orchestrator: true },
     };
     check("header written", await appendRow(cwd, dir, runId, header));

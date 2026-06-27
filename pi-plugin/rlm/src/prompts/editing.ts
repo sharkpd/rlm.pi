@@ -1,7 +1,7 @@
 /**
  * Editing root prompt for `propose_edits`.
  *
- * The RLM paper (Algorithm 1) requires the smart model to invoke the sub-LLM
+ * The RLM paper (Algorithm 1) requires the root model to invoke the sub-LLM
  * programmatically from within the REPL — the negotiation loop runs INSIDE one
  * engine run via `llm_query`, not as separate TypeScript-orchestrated runs.
  *

@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     const header: RunHeader = {
       kind: "header", v: STATE_SCHEMA_VERSION, runId, ts: new Date().toISOString(),
       rootPrompt: "test", context: { type: "str", chars: 4, json: false },
-      models: { smart: "a", worker: "b" },
+      models: { model: "a", worker: "b" },
       meta: { maxIterations: 30, maxDepth: 2, orchestrator: true },
     };
     check("appendRow succeeds", await appendRow(cwd, dir, runId, header));

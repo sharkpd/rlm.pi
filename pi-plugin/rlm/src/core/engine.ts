@@ -1,7 +1,7 @@
 /**
  * runRlm — the headless RLM loop (port of rlm/core/rlm.py `completion()`).
  *
- * Each call owns a fresh sandbox, drives the *smart* model turn-by-turn over ```repl``` blocks,
+ * Each call owns a fresh sandbox, drives the root model turn-by-turn over ```repl``` blocks,
  * services `llm_query`/`rlm_query` via the bridges, and stops when the model submits an answer
  * or a limit/turn cap is hit. Recursion is wired by giving the sandbox rlm handlers that call
  * back into `runRlm` at depth+1. Used for recursion and for headless/automation runs.
@@ -37,7 +37,7 @@ import { formatError } from "../util/errors.ts";
 
 
 export interface EngineDeps extends InteractiveDeps {
-  readonly smartModel: Model<Api>;
+  readonly model: Model<Api>;
   readonly workerModel: Model<Api>;
   readonly registry: ModelRegistry;
   readonly config: RlmConfig;
@@ -72,12 +72,12 @@ export function createEngine(deps: EngineDeps): RunRlm {
       emitter.emitTurn(0, deps.config.maxIterations);
     }
 
-    const overrideModel = input.smartModelOverride ? resolveModelId(deps.registry, input.smartModelOverride) : undefined;
-    if (input.smartModelOverride && !overrideModel) {
+    const overrideModel = input.modelOverride ? resolveModelId(deps.registry, input.modelOverride) : undefined;
+    if (input.modelOverride && !overrideModel) {
       if (selfReportId) emitter.emitSubcallUpdated({ id: selfReportId, status: "error", detail: "unknown model override" });
       else emitter.emitStatus("error");
       return {
-        answer: formatError(`unknown model override '${input.smartModelOverride}'`),
+        answer: formatError(`unknown model override '${input.modelOverride}'`),
         edits: [],
         iterations: 0,
         costUsd: 0,
@@ -86,7 +86,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
         durationMs: 0,
       };
     }
-    const smartModel = overrideModel ?? deps.smartModel;
+    const model = overrideModel ?? deps.model;
 
     // Create LimitGuard BEFORE the bridge so sub-LLM usage feeds into it.
     // Children inherit the parent's remaining budget/timeout (reference: limits propagate
@@ -149,7 +149,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
           kind: "header", v: STATE_SCHEMA_VERSION, runId, ts: nowIso(),
           rootPrompt: input.rootPrompt,
           context: { type: contextTypeLabel(input.context), chars: contextLength(input.context), json },
-          models: { smart: smartModel.id, worker: deps.workerModel.id },
+          models: { model: model.id, worker: deps.workerModel.id },
           meta: { maxIterations: deps.config.maxIterations, maxDepth: deps.config.maxDepth, orchestrator: deps.config.orchestrator, pipeline: true },
         };
         persistOn = await appendRow(deps.runState.cwd, deps.runState.dir, runId, header);
@@ -254,9 +254,9 @@ export function createEngine(deps: EngineDeps): RunRlm {
 
         if (deps.config.compaction) {
           const compactionDeps = {
-            model: smartModel,
+            model: model,
             registry: deps.registry,
-            contextWindow: smartModel.contextWindow,
+            contextWindow: model.contextWindow,
             thresholdPct: deps.config.compactionThresholdPct,
             signal: deps.signal,
           };
@@ -282,9 +282,9 @@ export function createEngine(deps: EngineDeps): RunRlm {
         appendUserMessage(history, buildTurnPrompt(i, deps.config.maxIterations, gateUserMsg));
 
         const turn = await runTurn(history, sandbox, {
-          model: smartModel,
+          model: model,
           registry: deps.registry,
-          sampling: { reasoning: deps.config.smartReasoning },
+          sampling: { reasoning: deps.config.rootReasoning },
           signal: deps.signal,
         });
         const allBlocks = turn.blocks.length > 0
@@ -389,9 +389,9 @@ async function finalize(history: ChatMsg[], deps: EngineDeps, limits: LimitGuard
   const finalHistory = [...history];
   appendUserMessage(finalHistory, FINALIZE_PROMPT);
   const { text, usage } = await modelComplete(finalHistory, {
-    model: deps.smartModel,
+    model: deps.model,
     registry: deps.registry,
-    reasoning: deps.config.smartReasoning,
+    reasoning: deps.config.rootReasoning,
     signal: deps.signal,
   });
   limits.addUsage(usage);

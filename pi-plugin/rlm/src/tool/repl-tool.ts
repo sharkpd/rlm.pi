@@ -162,9 +162,9 @@ class NativeBridgeState {
    * already-wired llmHandlers (which read from the same mutable state).
    */
   buildRlmHandlers(deps: {
-    smartModel: Model<Api>;
+    model: Model<Api>;
     workerModel: Model<Api>;
-    getSmartModel?: () => Model<Api> | undefined;
+    getModel?: () => Model<Api> | undefined;
     getWorkerModel?: () => Model<Api> | undefined;
     registry: ModelRegistry;
     config: RlmConfig;
@@ -191,12 +191,12 @@ class NativeBridgeState {
       const limitError = checkResourceLimits({ budgetUsd: remBudget, timeoutMs: remTimeout });
       if (limitError) return limitError;
 
-      const smartModel = deps.getSmartModel?.() ?? deps.smartModel;
+      const rootModel = deps.getModel?.() ?? deps.model;
       const workerModel = deps.getWorkerModel?.() ?? deps.workerModel;
       const resolvedOverride = model ? resolveModelId(deps.registry, model) : undefined;
       const subId = emitter.emitSubcallCreated({
         kind: "rlm", parentId: state.currentParentId, label: "rlm_query",
-        model: model ? (modelRef(resolvedOverride) ?? `unknown/${model}`) : (modelRef(smartModel) ?? smartModel.id),
+        model: model ? (modelRef(resolvedOverride) ?? `unknown/${model}`) : (modelRef(rootModel) ?? rootModel.id),
         detail: prompt.slice(0, 60),
         depth: childDepth,
       });
@@ -205,7 +205,7 @@ class NativeBridgeState {
       // turn progress, and cost deltas land on the per-invocation emitter, visible to
       // SubcallStore and the live visual tree.
       const runRlm = createEngine({
-        smartModel,
+        model: rootModel,
         workerModel,
         registry: deps.registry,
         config: deps.config,
@@ -226,7 +226,7 @@ class NativeBridgeState {
           context: prompt,
           depth: childDepth,
           parentNodeId: subId,
-          smartModelOverride: model ?? undefined,
+          modelOverride: model ?? undefined,
           remainingBudgetUsd: remBudget,
           remainingTimeoutMs: remTimeout,
         });
@@ -263,9 +263,9 @@ class NativeBridgeState {
 
 export interface ReplToolDeps {
   readonly sandboxManager: SandboxManager;
-  readonly smartModel: Model<Api>;
+  readonly model: Model<Api>;
   readonly workerModel: Model<Api>;
-  readonly getSmartModel?: () => Model<Api> | undefined;
+  readonly getModel?: () => Model<Api> | undefined;
   readonly getWorkerModel?: () => Model<Api> | undefined;
   readonly registry: ModelRegistry;
   readonly config: RlmConfig;
@@ -291,9 +291,9 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
   // Real recursive rlm_query via createEngine — each call spawns a child RLM
   // with its own sandbox and turn loop, not a flat one-shot llm_query.
   const rlmHandlers = bridgeState.buildRlmHandlers({
-    smartModel: deps.smartModel,
+    model: deps.model,
     workerModel,
-    getSmartModel: deps.getSmartModel,
+    getModel: deps.getModel,
     getWorkerModel: deps.getWorkerModel,
     registry,
     config,

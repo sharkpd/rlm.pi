@@ -94,7 +94,7 @@ async function main() {
   const baseCfg = mergeConfig((await loadSettings()).config);
   const limEngine = createEngine({
     emitter: new RlmEmitter(),
-    smartModel: model,
+    model: model,
     workerModel: cheapestModel(modelRegistry) ?? model,
     registry: modelRegistry,
     config: baseCfg,
