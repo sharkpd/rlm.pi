@@ -13,14 +13,32 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Type } from "typebox";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { getMarkdownTheme, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import type { RlmController } from "../mode/rlm-mode.ts";
 import { reviewAndApplyEdits } from "../patch/index.ts";
-import { validateToolParams } from "./tool-utils.ts";
+import { validateToolParams, createProgressNotifier } from "./tool-utils.ts";
 import { errorMessage } from "../util/errors.ts";
 import type { ProposedDiffEdit } from "../sandbox/protocol.ts";
 import { buildEditingRootPrompt } from "../prompts/editing.ts";
+import { RlmEmitter } from "./rlm-events.ts";
+import { RlmEventAggregator } from "./rlm-aggregator.ts";
+import { type RlmDetails } from "./rlm-details.ts";
+import {
+  headlineStatusGlyph,
+  renderCollapsedSubcallTree,
+  renderExpandedSubcallTree,
+} from "./subcall-render.ts";
+import { formatCost, formatTokens, spinnerFrame } from "../ui/theme.ts";
+
+// ── Parameter schema ──────────────────────────────────────────────────────
+
+const ProposeEditsParams = Object.freeze(Type.Object({
+  path: Type.String({ description: "Relative path of the file to edit or create" }),
+  instruction: Type.String({ description: "What change to make and why" }),
+}));
+
+// ── Helpers ───────────────────────────────────────────────────────────────
 
 /** Strip optional markdown fence that the model may wrap around the diff. */
 function extractDiff(answer: string): string {
@@ -35,29 +53,23 @@ function extractDiff(answer: string): string {
  */
 function ensureDiffHeader(diff: string, filePath: string): string {
   if (/^--- \S/m.test(diff)) return diff;
-  // Strip any bare `---` / `+++` lines the model may have put at the top
   const body = diff.replace(/^[-+]{3}\s*\n/gm, "");
   return `--- a/${filePath}\n+++ b/${filePath}\n${body}`;
 }
 
-// ── Parameter schema ──────────────────────────────────────────────────────
-
-const ProposeEditsParams = Object.freeze(Type.Object({
-  path: Type.String({ description: "Relative path of the file to edit" }),
-  instruction: Type.String({ description: "What change to make and why" }),
-}));
-
-// ── Details (progressive state for rendering) ──────────────────────────────
-
-export interface ProposeEditsDetails {
-  readonly status: "idle" | "running" | "done" | "error";
+function rootStats(details: RlmDetails, theme: Theme): string {
+  const parts: string[] = [];
+  parts.push(formatCost(details.totals.costUsd));
+  parts.push(`${formatTokens(details.totals.tokens)} tok`);
+  if (details.turns.current > 0) parts.push(`${details.turns.current} turn${details.turns.current > 1 ? "s" : ""}`);
+  return theme.fg("dim", parts.join(" · "));
 }
 
 // ── Tool factory ──────────────────────────────────────────────────────────
 
 export function createProposeEditsTool(
   controller: RlmController,
-): ToolDefinition<typeof ProposeEditsParams, ProposeEditsDetails> {
+): ToolDefinition<typeof ProposeEditsParams, RlmDetails> {
   return {
     name: "propose_edits",
     label: "Propose Edits",
@@ -69,20 +81,23 @@ export function createProposeEditsTool(
     ].join(" "),
     parameters: ProposeEditsParams,
 
-    async execute(_toolCallId, rawParams, _signal, _onUpdate, ctx) {
-      const validation = validateToolParams(
-        ProposeEditsParams,
-        rawParams,
-        "propose_edits",
-        (): ProposeEditsDetails => ({ status: "error" }),
-      );
+    async execute(_toolCallId, rawParams, _signal, onUpdate, ctx) {
+      const emptyDetails = (): RlmDetails => ({
+        status: "error",
+        rootPrompt: "",
+        turns: { current: 0, max: 0 },
+        subcalls: [],
+        totals: { costUsd: 0, tokens: 0 },
+      });
+
+      const validation = validateToolParams(ProposeEditsParams, rawParams, "propose_edits", emptyDetails);
       if (!validation.ok) return validation.error;
       const { path: filePath, instruction } = validation.value;
 
       if (!filePath || filePath === "undefined" || filePath === "null") {
         return {
           content: [{ type: "text", text: `propose_edits requires a valid file path, got: "${filePath}"` }],
-          details: { status: "error" },
+          details: emptyDetails(),
         };
       }
 
@@ -93,52 +108,63 @@ export function createProposeEditsTool(
       try {
         fileContent = await readFile(abs, "utf8");
       } catch (e) {
-        const isNotFound = (e as NodeJS.ErrnoException).code === "ENOENT";
-        if (!isNotFound) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
           return {
             content: [{ type: "text", text: `Cannot read ${filePath}: ${errorMessage(e)}` }],
-            details: { status: "error" },
+            details: emptyDetails(),
           };
         }
         fileContent = "";
       }
 
-      // One engine run — the model negotiates generate→validate→revise itself
-      // through llm_query inside the REPL, then returns the final diff.
       const fileContext = fileContent
         ? [`File: ${filePath}`, "```", fileContent, "```"].join("\n")
         : `File: ${filePath} (new file — does not exist yet, create it from scratch)`;
       const rootPrompt = buildEditingRootPrompt(instruction);
 
+      // Wire up emitter → aggregator → onUpdate for live progress rendering
+      const emitter = new RlmEmitter();
+      const aggregator = new RlmEventAggregator(emitter, onUpdate ?? (() => {}));
+      emitter.emitRootPrompt(rootPrompt);
+
+      const progress = createProgressNotifier<RlmDetails>({
+        onUpdate,
+        getDetails: () => aggregator.getState(),
+        isRunning: (details) => details.status === "running",
+        renderText: () => `${spinnerFrame()} editing ${filePath}…`,
+      });
+      progress.start();
+
       let diff: string;
       try {
-        const handle = controller.start(ctx, { kind: "fresh", rootPrompt, context: fileContext });
+        const handle = controller.start(ctx, { kind: "fresh", rootPrompt, context: fileContext }, emitter);
         const rlmResult = await handle.done;
         diff = ensureDiffHeader(extractDiff(rlmResult.answer), filePath);
       } catch (e) {
+        emitter.emitStatus("error");
         return {
           content: [{ type: "text", text: `Negotiation failed: ${errorMessage(e)}` }],
-          details: { status: "error" },
+          details: aggregator.getState(),
         };
+      } finally {
+        progress.stop();
+        aggregator.dispose();
+        emitter.shutdown();
       }
 
       if (!diff.trim()) {
         return {
           content: [{ type: "text", text: "Negotiation produced no diff." }],
-          details: { status: "error" },
+          details: { ...aggregator.getState(), status: "error" },
         };
       }
 
-      // Apply via the shared reviewer (popup + write)
       const diffEdit: ProposedDiffEdit = { diff };
       await reviewAndApplyEdits([], [diffEdit], controller.config, ctx);
 
       return {
-        content: [{
-          type: "text",
-          text: "Edit proposed via recursive negotiation; see apply result above.",
-        }],
-        details: { status: "done" },
+        content: [{ type: "text", text: "Edit proposed via recursive negotiation; see apply result above." }],
+        details: { ...aggregator.getState(), status: "done" },
       };
     },
 
@@ -150,6 +176,38 @@ export function createProposeEditsTool(
         [theme.fg("toolTitle", theme.bold("propose_edits ")), theme.fg("dim", `${args.path}: ${preview}`)].join(""),
         0, 0,
       );
+    },
+
+    renderResult(result, { expanded }, theme) {
+      const details = result.details as RlmDetails | undefined;
+      if (!details) {
+        const text = result.content[0];
+        return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+      }
+
+      const glyph = headlineStatusGlyph(details.status, theme);
+      const header = `${glyph} ${theme.fg("toolTitle", theme.bold("propose_edits"))} · ${rootStats(details, theme)}`;
+
+      if (!expanded) {
+        let body = "";
+        if (details.subcalls.length > 0) body = `\n${renderCollapsedSubcallTree(details.subcalls, theme)}`;
+        const hint = details.status === "running" ? "" : `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+        return new Text(`${header}${body}${hint}`, 0, 0);
+      }
+
+      const container = new Container();
+      container.addChild(new Text(header, 0, 0));
+      if (details.subcalls.length > 0) {
+        container.addChild(new Spacer(1));
+        container.addChild(new Text(theme.fg("muted", "─── Sub-calls ───"), 0, 0));
+        container.addChild(renderExpandedSubcallTree(details.subcalls, theme));
+      }
+      if (details.answer) {
+        container.addChild(new Spacer(1));
+        container.addChild(new Text(theme.fg("muted", "─── Diff ───"), 0, 0));
+        container.addChild(new Markdown(details.answer, 0, 0, getMarkdownTheme()));
+      }
+      return container;
     },
   };
 }
