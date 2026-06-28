@@ -16,6 +16,7 @@ const CHOICES = Object.freeze({
   maxErrors: Object.freeze(["3", "5", "10", "none"]),
   orchestrator: Object.freeze(["on", "off"]),
   compaction: Object.freeze(["on", "off"]),
+  rootSamplingMaxTokens: Object.freeze(["4096", "8192", "16384", "32768"]),
   sandboxInitTimeoutMs: Object.freeze(["10000", "30000", "60000", "120000"]),
   askUserQuestion: Object.freeze(["on", "off"]),
   todo: Object.freeze(["on", "off"]),
@@ -39,6 +40,7 @@ export async function showConfigPanel(ctx: ExtensionContext, config: RlmConfig):
     item("maxErrors", "Max consecutive errors", config.maxErrors != null ? String(config.maxErrors) : "none", CHOICES.maxErrors, "Stop after this many consecutive failing turns; none disables the guard."),
     item("orchestrator", "Orchestrator addendum", config.orchestrator ? "on" : "off", CHOICES.orchestrator, "Append extra divide-and-conquer guidance to the root model system prompt."),
     item("compaction", "Trajectory compaction", config.compaction ? "on" : "off", CHOICES.compaction, "Summarize old turns when history approaches the model context window."),
+    item("rootSamplingMaxTokens", "Root model output cap (tok)", String(config.rootSampling?.maxTokens ?? 16384), CHOICES.rootSamplingMaxTokens, "Max output tokens per root-model turn. Lower values keep each turn lean."),
     item("sandboxInitTimeoutMs", "Sandbox init timeout", String(config.sandboxInitTimeoutMs), CHOICES.sandboxInitTimeoutMs, "How long to wait for the Python worker to start."),
     item("askUserQuestion", "[Interactive] Ask user", config.askUserQuestion ? "on" : "off", CHOICES.askUserQuestion, "Allow root REPL code to present structured ask_user_question dialogs."),
     item("todo", "[Interactive] Todo", config.todo ? "on" : "off", CHOICES.todo, "Allow REPL code to manage a visible todo task list."),
@@ -84,6 +86,7 @@ function applySetting(config: RlmConfig, id: string, value: string): void {
     case "maxErrors": config.maxErrors = value === "none" ? undefined : Number(value); break;
     case "orchestrator": config.orchestrator = value === "on"; break;
     case "compaction": config.compaction = value === "on"; break;
+    case "rootSamplingMaxTokens": config.rootSampling = Object.freeze({ ...config.rootSampling, maxTokens: Number(value) }); break;
     case "sandboxInitTimeoutMs": config.sandboxInitTimeoutMs = Number(value); break;
     case "askUserQuestion": config.askUserQuestion = value === "on"; break;
     case "todo": config.todo = value === "on"; break;

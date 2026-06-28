@@ -99,7 +99,9 @@ function validateConfig(raw: unknown): Partial<RlmConfig> {
   if (compactionThresholdPct !== undefined && compactionThresholdPct <= 1) out.compactionThresholdPct = compactionThresholdPct;
   const python = validateString(r.python);
   if (python !== undefined) out.python = python;
-  if (typeof r.rootReasoning === "string") out.rootReasoning = r.rootReasoning as ThinkingLevel;
+  if (typeof r.smartReasoning === "string") out.smartReasoning = r.smartReasoning as ThinkingLevel;
+  const subSystemPrompt = validateString(r.subSystemPrompt);
+  if (subSystemPrompt !== undefined) out.subSystemPrompt = subSystemPrompt;
   const telemetry = validateTelemetry(r.telemetry);
   if (telemetry) out.telemetry = telemetry;
   const runLog = validateRunLog(r.runLog);
@@ -121,6 +123,16 @@ function validateConfig(raw: unknown): Partial<RlmConfig> {
     if (temperature !== undefined) sampling.temperature = temperature;
     if (typeof ss.reasoning === "string") sampling.reasoning = ss.reasoning as ThinkingLevel;
     out.subSampling = sampling;
+  }
+  if (typeof r.rootSampling === "object" && r.rootSampling !== null) {
+    const rs = r.rootSampling as Record<string, unknown>;
+    const rootSampling: { maxTokens?: number; temperature?: number; reasoning?: ThinkingLevel } = {};
+    const rsMaxTokens = validateNumber(rs.maxTokens, 1);
+    if (rsMaxTokens !== undefined) rootSampling.maxTokens = rsMaxTokens;
+    const rsTemperature = validateNumber(rs.temperature, 0);
+    if (rsTemperature !== undefined) rootSampling.temperature = rsTemperature;
+    if (typeof rs.reasoning === "string") rootSampling.reasoning = rs.reasoning as ThinkingLevel;
+    out.rootSampling = Object.freeze(rootSampling);
   }
   return out;
 }
@@ -156,6 +168,7 @@ export function mergeConfig(partial: Partial<RlmConfig>): RlmConfig {
     ...DEFAULT_CONFIG,
     ...partial,
     subSampling: { ...DEFAULT_CONFIG.subSampling, ...partial.subSampling },
+    rootSampling: Object.freeze({ ...DEFAULT_CONFIG.rootSampling, ...partial.rootSampling }),
     ...(partial.telemetry ? { telemetry: Object.freeze({ ...partial.telemetry }) } : {}),
     ...(partial.runLog ? { runLog: Object.freeze({ ...DEFAULT_CONFIG.runLog, ...partial.runLog }) } : {}),
   };

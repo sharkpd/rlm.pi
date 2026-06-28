@@ -75,6 +75,7 @@ class NativeBridgeState {
     maxPromptChars: number;
     maxConcurrent: number;
     sampling?: Sampling;
+    subSystem?: string;
     signal?: AbortSignal;
   }): Pick<SubLlmHandlers, "llmQuery" | "llmQueryBatched"> {
     const state = this;
@@ -94,6 +95,7 @@ class NativeBridgeState {
         const res = await modelComplete(messages, {
           model: resolved ?? workerModel(),
           registry: deps.registry,
+          system: deps.subSystem,
           maxTokens: deps.sampling?.maxTokens,
           temperature: deps.sampling?.temperature,
           reasoning: deps.sampling?.reasoning,
@@ -285,6 +287,7 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
     maxPromptChars: config.maxPromptChars,
     maxConcurrent: config.maxConcurrentSubcalls,
     sampling: config.subSampling,
+    subSystem: config.subSystemPrompt,
     signal,
   });
 

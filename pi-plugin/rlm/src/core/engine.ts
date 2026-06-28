@@ -26,7 +26,7 @@ import { compactHistory, shouldCompact } from "./compaction.ts";
 import { appendUserMessage } from "./history.ts";
 import { runTurn } from "./iteration.ts";
 import { type Limits, LimitError, LimitGuard } from "./limits.ts";
-import type { InteractiveDeps, RlmConfig, RlmInput, RlmResult, RunRlm } from "./types.ts";
+import type { InteractiveDeps, RlmConfig, RlmInput, RlmResult, RunRlm, Sampling } from "./types.ts";
 import { randomUUID } from "node:crypto";
 import { appendRow, appendTodoRow, generateRunId, pruneRuns, snapshotPath, writeContextSidecar } from "../state/index.ts";
 import { STATE_SCHEMA_VERSION } from "../state/rows.ts";
@@ -102,6 +102,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
     const llm = createLlmBridge({
       workerModel: deps.workerModel,
       registry: deps.registry,
+      subSystem: deps.config.subSystemPrompt,
       maxPromptChars: deps.config.maxPromptChars,
       maxConcurrent: deps.config.maxConcurrentSubcalls,
       sampling: deps.config.subSampling,
@@ -254,7 +255,9 @@ export function createEngine(deps: EngineDeps): RunRlm {
 
         if (deps.config.compaction) {
           const compactionDeps = {
-            model: model,
+            // Summarisation is done by the cheap worker model; the threshold stays on the
+            // root model's context window (that is the window the history fills each turn).
+            model: deps.workerModel,
             registry: deps.registry,
             contextWindow: model.contextWindow,
             thresholdPct: deps.config.compactionThresholdPct,
@@ -281,10 +284,15 @@ export function createEngine(deps: EngineDeps): RunRlm {
         const gateUserMsg = gateMsg ? `[${new Date().toISOString()}] ${gateMsg}` : undefined;
         appendUserMessage(history, buildTurnPrompt(i, deps.config.maxIterations, gateUserMsg));
 
+        // rootSampling fields win; smartReasoning is the default reasoning when not overridden.
+        const rootSampling: Sampling = {
+          reasoning: deps.config.smartReasoning,
+          ...deps.config.rootSampling,
+        };
         const turn = await runTurn(history, sandbox, {
           model: model,
           registry: deps.registry,
-          sampling: { reasoning: deps.config.rootReasoning },
+          sampling: rootSampling,
           signal: deps.signal,
         });
         const allBlocks = turn.blocks.length > 0
@@ -391,7 +399,7 @@ async function finalize(history: ChatMsg[], deps: EngineDeps, limits: LimitGuard
   const { text, usage } = await modelComplete(finalHistory, {
     model: deps.model,
     registry: deps.registry,
-    reasoning: deps.config.rootReasoning,
+    reasoning: deps.config.smartReasoning,
     signal: deps.signal,
   });
   limits.addUsage(usage);

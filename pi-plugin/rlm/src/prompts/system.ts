@@ -71,8 +71,11 @@ function replGlossary(recursion: boolean, askUserQuestion: boolean, todo: boolea
   if (recursion) {
     lines.push(
       "- `rlm_query(prompt, model=None)` / `rlm_query_batched(prompts, model=None)`: recursive RLM",
-      "  sub-calls — each child gets its own REPL to reason iteratively. Use for sub-problems that",
-      "  themselves need multi-step reasoning; fall back to `llm_query` for one-shot work.",
+      "  sub-calls. Each child runs a full REPL loop internally — its entire conversation is PRIVATE",
+      "  and never enters your history. Only the final answer (a short string) is returned.",
+      "  **PREFER over `llm_query`** when the sub-task is complex or its intermediate output would",
+      "  be large: rlm_query costs you zero history tokens regardless of what the child does.",
+      "  Fall back to `llm_query` only for simple one-shot extraction/summarisation.",
     );
   }
   lines.push(

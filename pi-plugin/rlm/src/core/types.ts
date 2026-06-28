@@ -71,8 +71,16 @@ export interface RlmConfig {
   todo: boolean;
   /** Skip the patch-preview popup and apply proposed edits immediately. */
   yolo: boolean;
-  /** ThinkingLevel for the root model (pi's default). */
-  rootReasoning?: ThinkingLevel;
+  /** ThinkingLevel for the root smart model (set via /rlm-config). */
+  smartReasoning?: ThinkingLevel;
+  /** Output token cap + temperature for the root smart model per turn.
+   *  Keeps each turn short so the next turn's input stays manageable.
+   *  `reasoning` is read from `smartReasoning` if omitted here. */
+  rootSampling?: Readonly<Sampling>;
+  /** System prompt injected into every llm_query / llm_query_batched sub-call.
+   *  Instructs the worker model to respond concisely.
+   *  undefined = no system prompt (raw completion). */
+  subSystemPrompt?: string;
   /** Sampling for sub-LLM (worker) calls. */
   subSampling: MutableSampling;
   /** Optional MLflow telemetry export configuration. Omitted by default. */

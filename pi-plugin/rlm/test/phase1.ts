@@ -203,7 +203,7 @@ async function main() {
     const previous = await loadSettings();
     const config = mergeConfig({
       ...DEFAULT_CONFIG,
-      rootReasoning: "high",
+      smartReasoning: "high",
       subSampling: { ...DEFAULT_CONFIG.subSampling, reasoning: "low" },
     });
     const saved = await saveSettings({ config, worker: "test/worker" });
@@ -211,7 +211,7 @@ async function main() {
     const roundTrip = mergeConfig(loaded.config);
     check("settings save reports success", saved);
     check("settings round-trips worker ref", loaded.worker === "test/worker");
-    check("settings round-trips reasoning", roundTrip.rootReasoning === "high" && roundTrip.subSampling.reasoning === "low");
+    check("settings round-trips reasoning", roundTrip.smartReasoning === "high" && roundTrip.subSampling.reasoning === "low");
     await saveSettings(previous);
   }
 
