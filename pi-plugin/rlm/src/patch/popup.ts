@@ -1,6 +1,6 @@
 /**
  * Modal TUI overlay that renders a unified diff and lets the user
- * Accept (a) or Reject (r) it before it is applied to disk.
+ * Accept (Enter/y) or Reject (r) it before it is applied to disk.
  *
  * Rendering rules:
  *   +lines  → theme.fg("success", line)
@@ -80,7 +80,7 @@ export async function showPatchPopup(
       const container = new Container();
       container.addChild(new Text(
         theme.fg("toolTitle", theme.bold(
-          `RLM proposed ${editCount} edit${editCount !== 1 ? "s" : ""} — [a]ccept / [r]eject`,
+          `RLM proposed ${editCount} edit${editCount !== 1 ? "s" : ""} — [Enter] accept / [r]eject`,
         )),
         1, 0,
       ));
@@ -104,7 +104,7 @@ export async function showPatchPopup(
         render: (w: number) => container.render(w),
         invalidate: () => container.invalidate(),
         handleInput: (data: string) => {
-          if (data === "a" || data === "y") { done("accept"); return; }
+          if (data === "\r" || data === "y") { done("accept"); return; }
           if (data === "r" || data === "n" || data === "\x1b") { done("reject"); return; }
           if (data === "\x1b[A" || data === "k") {
             state.scrollTop = Math.max(0, state.scrollTop - 1);

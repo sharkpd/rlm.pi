@@ -6,7 +6,7 @@ import { Markdown } from "@earendil-works/pi-tui";
 import { registerRlmCommand } from "./commands/rlm.ts";
 import { registerRlmConfigCommand } from "./commands/rlm-config.ts";
 import { createRlmTool } from "./tool/rlm-tool.ts";
-import { createProposeEditsTool } from "./tool/propose-edits-tool.ts";
+import { createApplyDiffTool } from "./tool/apply-diff-tool.ts";
 import { createReplTool } from "./tool/repl-tool.ts";
 import { loadSettings, mergeConfig, resolveModelId } from "./config/settings.ts";
 import { RlmController, cheapestModel } from "./mode/rlm-mode.ts";
@@ -58,7 +58,7 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
   // ── Tool registration ──
   // Existing rlm tool (stays for backward compat with /rlm mode)
   pi.registerTool(createRlmTool(controller));
-  pi.registerTool(createProposeEditsTool(controller));
+  pi.registerTool(createApplyDiffTool(controller));
 
   // Native repl tool — re-registered each session to pick up model provider changes
   let guidePosted = false;
@@ -150,7 +150,7 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
     if (BLOCKED_NATIVE_TOOLS.has(event.toolName)) {
       return {
         block: true,
-        reason: "RLM mode active. Use repl({code}) to read files and propose_edits({path, instruction}) to modify them. All files are pre-loaded in the REPL. If sub-LLM credits are exhausted, report to the user.",
+        reason: "RLM mode active. Use repl({code}) to read files and apply_diff({diff}) to modify them. All files are pre-loaded in the REPL. If sub-LLM credits are exhausted, report to the user.",
       };
     }
   });
