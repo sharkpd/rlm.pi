@@ -16,7 +16,7 @@ import { packRepository, formatForLLM, serializeForSandbox } from "./context/rep
 import { buildNativeSystemPrompt } from "./prompts/system.ts";
 import { errorMessage } from "./util/errors.ts";
 
-const BLOCKED_NATIVE_TOOLS = Object.freeze(new Set(["read", "grep", "bash"]));
+const BLOCKED_NATIVE_TOOLS = Object.freeze(new Set(["read", "grep"]));
 
 export default function rlmExtension(pi: ExtensionAPI): void {
   // Init synchronously with defaults — ensures commands/tools/handlers register before session_start
@@ -28,6 +28,23 @@ export default function rlmExtension(pi: ExtensionAPI): void {
     python: config.python,
     sandboxInitTimeoutMs: config.sandboxInitTimeoutMs,
   });
+  let packedContextText: string | undefined;
+  let contextPackPromise: Promise<string | undefined> | undefined;
+  const ensureRepositoryContext = async (cwd: string): Promise<string | undefined> => {
+    if (packedContextText !== undefined && sandboxManager.contextPayload !== null) return packedContextText;
+    contextPackPromise ??= packRepository(cwd)
+      .then((result) => {
+        if (!result.ok) {
+          console.warn(`[rlm] repository context pack failed: ${result.error}`);
+          return undefined;
+        }
+        sandboxManager.contextPayload = serializeForSandbox(result.value);
+        packedContextText = formatForLLM(result.value);
+        return packedContextText;
+      })
+      .finally(() => { contextPackPromise = undefined; });
+    return contextPackPromise;
+  };
 
   // Load persisted settings async — applied before session_start handler reads controller state
   const settingsReady = loadSettings()
@@ -81,6 +98,10 @@ export default function rlmExtension(pi: ExtensionAPI): void {
           getWorkerModel: () => controller.resolveModels(ctx)?.worker,
           registry: ctx.modelRegistry,
           config: controller.config,
+          ensureContext: async () => {
+            const contextText = await ensureRepositoryContext(ctx.cwd ?? process.cwd());
+            if (contextText === undefined) throw new Error("repository context could not be loaded into RLM sandbox");
+          },
         }));
       } catch { /* re-registration on provider change — ignore if already registered */ }
     }
@@ -107,14 +128,13 @@ export default function rlmExtension(pi: ExtensionAPI): void {
 
     // Inject repository context as a compact listing (once per session, only when RLM is enabled)
     if (controller.enabled && !contextInjected) {
-      contextInjected = true;
       const cwd = ctx.cwd ?? process.cwd();
-      const result = await packRepository(cwd);
-      if (result.ok) {
-        const contextText = formatForLLM(result.value);
+      const contextText = await ensureRepositoryContext(cwd);
+      if (contextText !== undefined) {
+        contextInjected = true;
         const instruction = [
-          "ANALYZE THIS REPOSITORY using repl({code}) — read/grep/bash are DISABLED.",
-          `Total: ${result.value.totalFiles} files, ${result.value.totalChars.toLocaleString()} chars — must use repl().`,
+          "ANALYZE THIS REPOSITORY using repl({code}) — read/grep are DISABLED.",
+          "Repository contents are pre-loaded in the Python REPL `context` variable.",
           "Chunk context via Python, delegate to llm_query. If credits exhausted → report and stop.",
           "",
         ].join("\n");
@@ -123,9 +143,6 @@ export default function rlmExtension(pi: ExtensionAPI): void {
           content: instruction + contextText,
           timestamp: 0,
         } as (typeof filtered)[number];
-
-        // Store context for sandbox loading on first repl() call
-        sandboxManager.contextPayload = serializeForSandbox(result.value);
 
         return { messages: [contextMsg, ...filtered] };
       }
@@ -141,7 +158,7 @@ export default function rlmExtension(pi: ExtensionAPI): void {
 
   // ── Tool restriction: block analysis tools when RLM is ON ──
   // `edit`/`write` stay unblocked so the agent modifies files through Pi's native
-  // tool flow (visible to all plugins, +/- diff preview). Only read/grep/bash are
+  // tool flow (visible to all plugins, +/- diff preview). Only read/grep are
   // blocked — the repository is pre-loaded in the REPL `context` variable.
   pi.on("tool_call", async (event) => {
     if (!controller.enabled) return;
@@ -158,5 +175,8 @@ export default function rlmExtension(pi: ExtensionAPI): void {
     controller.abort();
     await sandboxManager.dispose();
     contextInjected = false;
+    packedContextText = undefined;
+    contextPackPromise = undefined;
+    sandboxManager.contextPayload = null;
   });
 }

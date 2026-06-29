@@ -277,6 +277,7 @@ export interface ReplToolDeps {
   readonly config: RlmConfig;
   readonly signal?: AbortSignal;
   readonly onUsage?: (usage: Usage, role: "sub") => void;
+  readonly ensureContext?: () => Promise<void>;
 }
 
 export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplToolParams, ReplDetails> {
@@ -378,6 +379,7 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
           parentId: undefined,
         });
 
+        await deps.ensureContext?.();
         await sandboxManager.getOrCreate({
           ...llmHandlers,
           ...rlmHandlers,

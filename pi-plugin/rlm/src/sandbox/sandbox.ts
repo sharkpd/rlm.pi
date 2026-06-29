@@ -161,6 +161,7 @@ export class PythonSandbox {
     try {
       path = await this.writeContextFile(payload, isJson);
       const res = await this.request({ type: "load_context", path, index, json: isJson });
+      if (!res.ok) throw new Error(res.error ?? "load_context failed");
       return res.index ?? 0;
     } finally {
       if (path) await unlink(path).catch(() => {});
@@ -183,6 +184,7 @@ export class PythonSandbox {
 
   async exec(code: string): Promise<ReplResult> {
     const res = await this.request({ type: "exec", code });
+    if (!res.ok) throw new Error(res.error ?? "exec failed");
     return {
       stdout: res.stdout ?? "",
       stderr: res.stderr ?? "",
@@ -212,6 +214,7 @@ export class PythonSandbox {
   async snapshot(path: string, nonce: string): Promise<boolean> {
     try {
       const res = await this.request({ type: "snapshot", path, nonce });
+      if (!res.ok) return false;
       return res.ok;
     } catch {
       return false;
@@ -222,6 +225,7 @@ export class PythonSandbox {
   async restore(path: string, nonce: string): Promise<boolean> {
     try {
       const res = await this.request({ type: "restore", path, nonce });
+      if (!res.ok) return false;
       return res.ok;
     } catch {
       return false;

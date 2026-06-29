@@ -230,7 +230,7 @@ export function buildNativeSystemPrompt(): string {
     "║  NATIVE RLM MODE — YOU ARE AN ORCHESTRATOR, NOT A READER      ║",
     "╚══════════════════════════════════════════════════════════════════╝",
     "",
-    "ABSOLUTE RESTRICTION: Do NOT use `read`, `grep`, or `bash` to access files.",
+    "ABSOLUTE RESTRICTION: Do NOT use `read` or `grep` to access files.",
     "All file content is pre-loaded in the REPL `context` variable. Use ONLY `repl({code})`.",
     "If sub-LLM credits are exhausted → report the error to the user and stop.",
     "",

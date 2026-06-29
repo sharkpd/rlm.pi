@@ -35,8 +35,7 @@ export class SandboxManager {
    * given handlers. Subsequent calls return the existing sandbox immediately.
    * Deduplicates concurrent calls via initPromise.
    *
-   * The caller is responsible for calling loadContext() on the returned sandbox
-   * before first use.
+   * If contextPayload is set, it is loaded before the sandbox is returned.
    */
   async getOrCreate(handlers: Partial<SubLlmHandlers>): Promise<PythonSandbox> {
     if (this.disposed) throw new Error("SandboxManager disposed");
@@ -45,8 +44,8 @@ export class SandboxManager {
       // "context" event's async packRepository resolves after the first repl() call).
       // Load it into the live sandbox now if still pending.
       if (this.contextPayload !== null && !this.contextLoaded) {
+        await this.sandbox.loadContext(this.contextPayload);
         this.contextLoaded = true;
-        try { await this.sandbox.loadContext(this.contextPayload); } catch { /* best-effort */ }
       }
       return this.sandbox;
     }
@@ -61,15 +60,16 @@ export class SandboxManager {
       initTimeoutMs: this.config.sandboxInitTimeoutMs,
       handlers,
     }).then(async (s) => {
-      // Load context on first creation if available
+      // Load context on first creation if available.
       if (this.contextPayload !== null) {
+        await s.loadContext(this.contextPayload);
         this.contextLoaded = true;
-        try { await s.loadContext(this.contextPayload); } catch { /* best-effort */ }
       }
       this.sandbox = s;
       this.initPromise = null;
       return s;
     }).catch((err) => {
+      this.contextLoaded = false;
       this.initPromise = null;
       throw err;
     });
@@ -115,6 +115,7 @@ export class SandboxManager {
         // Best-effort dispose of the dead sandbox
         try { await this.sandbox.dispose(); } catch { /* already dead */ }
         this.sandbox = null;
+        this.contextLoaded = false;
       }
       throw err;
     } finally {
@@ -139,5 +140,6 @@ export class SandboxManager {
     this.disposed = true;
     await this.sandbox?.dispose();
     this.sandbox = null;
+    this.contextLoaded = false;
   }
 }
