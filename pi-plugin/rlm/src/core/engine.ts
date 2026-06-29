@@ -21,7 +21,7 @@ import { PythonSandbox } from "../sandbox/sandbox.ts";
 import { advancePhase as validatePhaseTransition, phaseGatePrompt, type PhaseState } from "./pipeline.ts";
 import { previewStdout, previewText } from "../text/preview.ts";
 import { contextLength, contextSizeStats, contextTypeLabel } from "../text/tokens.ts";
-import { collectDiffs, collectEdits, finalAnswerOf, formatReplOutputs, latestAnswerContentOf, turnHadError } from "./answer.ts";
+import { collectEdits, finalAnswerOf, formatReplOutputs, latestAnswerContentOf, turnHadError } from "./answer.ts";
 import { compactHistory, shouldCompact } from "./compaction.ts";
 import { appendUserMessage } from "./history.ts";
 import { runTurn } from "./iteration.ts";
@@ -32,7 +32,7 @@ import { appendRow, appendTodoRow, generateRunId, pruneRuns, snapshotPath, write
 import { STATE_SCHEMA_VERSION } from "../state/rows.ts";
 import type { PhaseRow, RunHeader } from "../state/rows.ts";
 import { serializeForSandbox, type ContextBundle } from "../context/repomix-context.ts";
-import type { ProposedDiffEdit, ProposedEdit } from "../sandbox/protocol.ts";
+import type { ProposedEdit } from "../sandbox/protocol.ts";
 import { formatError } from "../util/errors.ts";
 
 
@@ -136,7 +136,6 @@ export function createEngine(deps: EngineDeps): RunRlm {
     let compactions = 0;
     let completedTurns = 0;
     let editsAcc: ProposedEdit[] = [];
-    let diffsAcc: ProposedDiffEdit[] = [];
     let phaseState: PhaseState | undefined;
     let nodeStatus: "done" | "error" = "done";
     let persistOn = persist;
@@ -186,7 +185,6 @@ export function createEngine(deps: EngineDeps): RunRlm {
         : {};
       const interactiveHandlers = buildInteractiveHandlers({
         onAskUserQuestion: deps.config.askUserQuestion ? deps.onAskUserQuestion : undefined,
-        onProposeDiff: deps.onProposeDiff,
         onTodo: deps.config.todo ? deps.onTodo : undefined,
         onTodoRow: async (action, params, todoResult) => {
           if (!persistOn || !runId || !deps.runState) return;
@@ -229,7 +227,6 @@ export function createEngine(deps: EngineDeps): RunRlm {
         limits.addRaw(input.resume.usageSeed.costUsd, input.resume.usageSeed.inputTokens, input.resume.usageSeed.outputTokens);
         best = input.resume.best;
         editsAcc = [];
-        diffsAcc = [];
         compactions = input.resume.compactions;
         completedTurns = input.resume.completedTurns;
         if (input.resume.phase) {
@@ -313,12 +310,9 @@ export function createEngine(deps: EngineDeps): RunRlm {
         completedTurns = i + 1;
         const proposedEdits = collectEdits(turn.results);
         if (proposedEdits.length > 0) editsAcc = proposedEdits;
-        const proposedDiffs = collectDiffs(turn.results);
-        if (proposedDiffs.length > 0) diffsAcc = proposedDiffs;
-
         const final = finalAnswerOf(turn.results);
         if (final != null) {
-          const done = result(final, i + 1, limits, editsAcc, diffsAcc);
+          const done = result(final, i + 1, limits, editsAcc);
           await recordTerminal("completed", done);
           lastAnswer = done.answer;
           return done;
@@ -349,21 +343,21 @@ export function createEngine(deps: EngineDeps): RunRlm {
         }
       }
       if (pendingReplOutputs) appendUserMessage(history, pendingReplOutputs);
-      const finalized = result(await finalize(history, deps, limits), deps.config.maxIterations, limits, editsAcc, diffsAcc);
+      const finalized = result(await finalize(history, deps, limits), deps.config.maxIterations, limits, editsAcc);
       await recordTerminal("finalized", finalized);
       lastAnswer = finalized.answer;
       return finalized;
     } catch (err) {
       // Abort is a user action — resolve with the best partial, not an error.
       if (deps.signal?.aborted) {
-        const aborted = result(best.trim() || "(aborted)", completedTurns, limits, editsAcc, diffsAcc);
+        const aborted = result(best.trim() || "(aborted)", completedTurns, limits, editsAcc);
         await recordTerminal("aborted", aborted);
         lastAnswer = aborted.answer;
         return aborted;
       }
       if (err instanceof LimitError) {
         nodeStatus = "error";
-        const stopped = result(best.trim() || `(stopped: ${err.message})`, completedTurns, limits, editsAcc, diffsAcc);
+        const stopped = result(best.trim() || `(stopped: ${err.message})`, completedTurns, limits, editsAcc);
         await recordTerminal("stopped", stopped);
         lastAnswer = stopped.answer;
         return stopped;
@@ -389,9 +383,9 @@ export function createEngine(deps: EngineDeps): RunRlm {
   return run;
 }
 
-function result(answer: string, iterations: number, limits: LimitGuard, edits: ProposedEdit[] = [], diffs: ProposedDiffEdit[] = []): RlmResult {
+function result(answer: string, iterations: number, limits: LimitGuard, edits: ProposedEdit[] = []): RlmResult {
   const u = limits.usage();
-  return { answer, edits, diffs, iterations, costUsd: u.costUsd, inputTokens: u.inputTokens, outputTokens: u.outputTokens, durationMs: u.durationMs };
+  return { answer, edits, iterations, costUsd: u.costUsd, inputTokens: u.inputTokens, outputTokens: u.outputTokens, durationMs: u.durationMs };
 }
 
 /** Out of turns: ask the model for its best final answer (plain text). */

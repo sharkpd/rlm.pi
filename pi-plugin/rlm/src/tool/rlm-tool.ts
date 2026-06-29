@@ -22,8 +22,6 @@ import {
   renderExpandedSubcallTree,
 } from "./subcall-render.ts";
 import { createProgressNotifier, validateToolParams } from "./tool-utils.ts";
-import { applyEdits } from "../patch/index.ts";
-import { tryExtractDiff } from "../core/answer.ts";
 
 // ── Parameter schema ──
 
@@ -89,16 +87,11 @@ export function createRlmTool(controller: RlmController): ToolDefinition<typeof 
         const interactive = createPiInteractiveDeps(ctx);
         const { done } = controller.start(ctx, input, emitter, {
           onAskUserQuestion: controller.config.askUserQuestion ? interactive.onAskUserQuestion : undefined,
-          onProposeDiff: interactive.onProposeDiff,
           onTodo: controller.config.todo ? interactive.onTodo : undefined,
         });
         const result = await done;
 
         emitter.emitAnswer(result.answer);
-        const proposedEdits = result.edits ?? [];
-        const proposedDiffs = result.diffs?.length ? result.diffs : tryExtractDiff(result.answer);
-        if (proposedEdits.length > 0) emitter.emitEdits(proposedEdits);
-        await applyEdits(proposedEdits, proposedDiffs, ctx);
 
         return {
           content: [{ type: "text", text: result.answer }],

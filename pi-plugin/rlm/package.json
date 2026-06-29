@@ -44,7 +44,6 @@
     "typebox": "*"
   },
   "dependencies": {
-    "diff": "^9.0.0",
     "repomix": "^1.15.0"
   },
   "devDependencies": {

@@ -32,10 +32,6 @@ export interface ProposedEdit {
   readonly newText: string;
 }
 
-export interface ProposedDiffEdit {
-  readonly diff: string;
-}
-
 /** A normal response to a request (keyed by the request `id`). */
 export interface WorkerResponse {
   readonly id: string;
@@ -47,7 +43,6 @@ export interface WorkerResponse {
   readonly final_answer?: string | null;
   readonly answer_content?: string;
   readonly edits?: readonly ProposedEdit[];
-  readonly diffs?: readonly ProposedDiffEdit[];
   readonly raised?: boolean;
   readonly execution_time?: number;
   // user-created variable names after this exec (filters builtins/context) — Metadata(stdout) for history orientation
@@ -67,7 +62,6 @@ export type InterruptKind =
   | "rlm_query_batched"
   | "advance_phase"
   | "ask_user_question"
-  | "propose_diff"
   | "todo";
 
 export interface AskOption {
@@ -121,11 +115,6 @@ export interface AskUserQuestionInterrupt extends InterruptBase {
   readonly questions: readonly AskQuestion[];
 }
 
-export interface ProposeDiffInterrupt extends InterruptBase {
-  readonly type: "propose_diff";
-  readonly diff?: string;
-}
-
 export interface TodoInterrupt extends InterruptBase {
   readonly type: "todo";
   readonly action: "create" | "update" | "list" | "get" | "delete" | "clear";
@@ -148,7 +137,6 @@ export type WorkerInterrupt =
   | BatchedPromptInterrupt
   | AdvancePhaseInterrupt
   | AskUserQuestionInterrupt
-  | ProposeDiffInterrupt
   | TodoInterrupt;
 
 export type WorkerMessage = WorkerResponse | WorkerInterrupt;
@@ -160,7 +148,6 @@ export const INTERRUPT_KINDS = Object.freeze(new Set<InterruptKind>([
   "rlm_query_batched",
   "advance_phase",
   "ask_user_question",
-  "propose_diff",
   "todo",
 ]));
 
@@ -191,7 +178,6 @@ export interface ReplResult {
   readonly finalAnswer: string | null;
   readonly answerContent: string;
   readonly edits: readonly ProposedEdit[];
-  readonly diffs: readonly ProposedDiffEdit[];
   readonly raised: boolean;
   readonly executionTimeMs: number;
   /** User-created variable names after this exec (builtins/context filtered out). */

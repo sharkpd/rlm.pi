@@ -50,8 +50,6 @@ function replGlossary(recursion: boolean, askUserQuestion: boolean, todo: boolea
     "  summarization, or Q&A over a chunk of text.",
     "- `llm_query_batched(prompts: list[str], model=None) -> list[str]`: run several sub-LLM calls",
     "  concurrently; output order matches input order.",
-    "- `propose_diff(diff: str) -> str`: route a complete unified diff through Pi's native edit flow.",
-    "  Keep large diffs in REPL variables; do not print them in final answers.",
   ];
   if (askUserQuestion) {
     lines.push(
@@ -168,7 +166,6 @@ function nativeReplGlossary(): string {
     "and fan out with `llm_query_batched`; reach for `rlm_query` only when a sub-task needs its own iterative",
     "reasoning. Avoid excessive recursive sub-calls when a batched one-shot suffices.",
     "- `todo(action, **kwargs) -> str` — manage a task list. Actions: create, update, list, get, delete, clear. Statuses: pending → in_progress → completed.",
-    "- `propose_diff(diff: str) -> str` — route a complete unified diff through Pi's native edit flow; keep large diffs in REPL variables.",
     "- `SHOW_VARS() -> str` — list all variables currently in the REPL.",
     "- `answer`: dict `{\"content\": \"\", \"ready\": False}`. To submit: `answer[\"content\"] = \"...\"; answer[\"ready\"] = True`.",
     "",
@@ -201,7 +198,8 @@ function nativeReplGlossary(): string {
     "| `repl({code})` | Need to chunk/delegate `context` to sub-LLMs; need Python scripting; need REPL state across calls |",
     "| `read` / `grep` | Inspect a few specific files directly; small codebase |",
     "| `zebra-mcp` | Semantic search over the codebase |",
-    "| `propose_diff(diff)` (inside repl) | Propose a unified diff through Pi's native edit flow |",
+    "| `edit` | Modify an existing file with exact text replacement (native Pi flow, visible to all plugins) |",
+    "| `write` | Create a new file (native Pi flow, visible to all plugins) |",
     "| `llm_query` (inside repl) | Extract, summarize, or classify a chunk of text |",
     "| `rlm_query` (inside repl) | Complex sub-task needing iterative reasoning with its own REPL |",
     "| `todo` (inside repl) | Track multi-step progress visibly to the user |",
@@ -210,7 +208,7 @@ function nativeReplGlossary(): string {
     "1. **Plan**: Create todos for the multi-step analysis. Probe `context` — print length, inspect a few entries.",
     "2. **Chunk & Delegate**: Slice `context` into batches, delegate each batch to sub-LLMs via `llm_query_batched`.",
     "3. **Aggregate**: Collect results in Python, pass aggregated results to a final `llm_query` or produce the answer directly.",
-    "4. **Finalize**: Set `answer[\"content\"]` and `answer[\"ready\"] = True`, or just write your final answer as a normal message.",
+    "4. **Finalize**: For file changes, use the `edit` tool (modify existing) or `write` tool (create new) through Pi's native tool flow. Set `answer[\"content\"]` and `answer[\"ready\"] = True`, or just write your final answer as a normal message.",
     "",
     "### Task-Specific Patterns",
     "",
@@ -251,9 +249,8 @@ export function buildNativeSystemPrompt(): string {
     "All file content is pre-loaded in the REPL `context` variable. Use ONLY `repl({code})`.",
     "If sub-LLM credits are exhausted → report the error to the user and stop.",
     "",
-    "ABSOLUTE RESTRICTION: Do NOT use `write`, `edit`, or `apply_diff` to modify files directly.",
-    "Inside `repl({code})`, call `propose_diff(diff)` with a complete unified diff.",
-    "Keep large diffs in REPL variables; do not print them in final answers.",
+    "For file changes, use `edit` (modify existing) or `write` (create new) — these route through",
+    "Pi's native tool flow, visible to all plugins with a `+/-` diff preview.",
     "",
     nativeReplGlossary(),
   ].join("\n");

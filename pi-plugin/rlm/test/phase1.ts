@@ -133,7 +133,7 @@ async function main() {
   {
     const noVars = formatReplOutputs([{
       stdout: "x".repeat(5000), stderr: "", finalAnswer: null, answerContent: "",
-      edits: [], diffs: [], raised: false, executionTimeMs: 0, varNames: [],
+      edits: [], raised: false, executionTimeMs: 0, varNames: [],
     }]);
     check("elision note uses slices, not 'assign first'", noVars.includes("use slices to inspect"), noVars.slice(-80));
     check("elision + empty vars gives fallback hint", noVars.includes("No REPL vars yet"), noVars.slice(-80));

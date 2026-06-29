@@ -7,9 +7,9 @@ This is NOT a security sandbox: __import__ and open are available, so code can i
 Protocol (parent -> worker):  {"id","type":"exec"|"load_context"|"shutdown", ...}
 Protocol (worker -> parent):  {"id","ok",...result}            # response to a request
                               {"type":"llm_query"|"llm_query_batched"|"rlm_query"|...
-                               "advance_phase"|"ask_user_question"|"propose_diff"|"todo","rid",...}
+                               "advance_phase"|"ask_user_question"|"todo","rid",...}
                                                                 # mid-exec helper request
-When sandbox code calls llm_query/rlm_query/advance_phase/ask_user_question/propose_diff/todo, the worker writes a request line
+When sandbox code calls llm_query/rlm_query/advance_phase/ask_user_question/todo, the worker writes a request line
 and BLOCKS reading stdin until the matching {"type":"llm_reply","rid",...} arrives. The parent
 services the request in-process (it holds API keys).
 """
@@ -64,8 +64,8 @@ RESERVED = frozenset(
     {
         "llm_query", "llm_query_batched", "rlm_query", "rlm_query_batched",
         "advance_phase",
-        "ask_user_question", "propose_diff", "todo",
-        "SHOW_EDITS", "SHOW_DIFFS", "SHOW_VARS", "answer", "context",
+        "ask_user_question", "todo",
+        "SHOW_VARS", "answer", "context",
     }
 )
 
@@ -117,10 +117,7 @@ class Worker:
         ns["rlm_query_batched"] = self._rlm_query_batched
         ns["advance_phase"] = self._advance_phase
         ns["ask_user_question"] = self._ask_user_question
-        ns["propose_diff"] = self._propose_diff
         ns["todo"] = self._todo
-        ns["SHOW_EDITS"] = self._show_edits
-        ns["SHOW_DIFFS"] = self._show_diffs
         ns["SHOW_VARS"] = self._show_vars
         if not isinstance(ns.get("answer"), _AnswerDict):
             cur = ns.get("answer")
@@ -153,12 +150,6 @@ class Worker:
     def _show_vars(self) -> str:
         avail = {k: type(self.ns[k]).__name__ for k in self._user_var_names()}
         return f"Available variables: {avail}" if avail else "No variables created yet."
-
-    def _show_edits(self) -> str:
-        return "No retained edits — use propose_diff(diff) to route a unified diff through Pi's native edit flow."
-
-    def _show_diffs(self) -> str:
-        return "No retained diffs — keep diffs in REPL variables and call propose_diff(diff) when ready."
 
     # ---- sub-LLM bridge over stdio --------------------------------------------------------
 
@@ -250,21 +241,6 @@ class Worker:
             return [{"question": q["question"], "selected": [], "custom": f"Error: {r['error']}"} for q in cleaned]
         answers = r.get("answers", [])
         return answers if isinstance(answers, list) else []
-
-    def _propose_diff(self, diff: str) -> str:
-        """Route a unified diff through the parent Pi native edit flow.
-
-        Valid at any depth — the handler routes through the parent Pi native edit
-        flow, which is session-scoped. The worker never writes files directly here.
-        """
-        diff_text = str(diff)
-        if not diff_text.strip():
-            return "Error: propose_diff requires a non-empty unified diff"
-        r = self._rpc("propose_diff", {"diff": diff_text})
-        if r.get("error"):
-            return f"Error: {r['error']}"
-        response = r.get("response", "ok")
-        return response if isinstance(response, str) else "ok"
 
     def _todo(self, action: str, **kwargs) -> str:
         """Manage the run's task list.
@@ -372,7 +348,6 @@ class Worker:
             "final_answer": final,
             "answer_content": str(answer_content),
             "edits": [],
-            "diffs": [],
             "raised": raised,
             "execution_time": time.perf_counter() - start,
             "var_names": self._user_var_names(),

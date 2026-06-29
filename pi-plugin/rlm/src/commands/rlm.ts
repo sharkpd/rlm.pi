@@ -13,8 +13,6 @@ import type { RunHeader } from "../state/rows.ts";
 import { buildRlmSystemPrompt } from "../prompts/system.ts";
 import { RlmEmitter } from "../tool/rlm-events.ts";
 import { RlmEventAggregator } from "../tool/rlm-aggregator.ts";
-import { applyEdits } from "../patch/index.ts";
-import { tryExtractDiff } from "../core/answer.ts";
 
 export function registerRlmCommand(pi: ExtensionAPI, controller: RlmController): void {
   pi.registerCommand("rlm", {
@@ -130,7 +128,6 @@ async function executeRlmRunWithResume(
     }
     handle = controller.start(ctx, { kind: "resume", resume: recon, context }, emitter, {
       onAskUserQuestion: controller.config.askUserQuestion ? interactive.onAskUserQuestion : undefined,
-      onProposeDiff: interactive.onProposeDiff,
       onTodo: controller.config.todo ? interactive.onTodo : undefined,
     });
   } catch (e) {
@@ -142,12 +139,6 @@ async function executeRlmRunWithResume(
   try {
     const result = await done;
     pi.sendMessage({ customType: "rlm-answer", content: result.answer, display: true });
-    const proposedDiffs = result.diffs?.length ? result.diffs : tryExtractDiff(result.answer);
-    await applyEdits(
-      result.edits ?? [],
-      proposedDiffs,
-      ctx,
-    );
   } catch (e) {
     ctx.ui.notify(`RLM resume failed: ${e instanceof Error ? e.message : String(e)}`, "error");
   } finally {

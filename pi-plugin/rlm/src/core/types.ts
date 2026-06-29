@@ -1,7 +1,7 @@
 /** Shared configuration + runtime types for the RLM engine. */
 
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import type { AskAnswer, AskQuestion, ProposedDiffEdit, ProposedEdit } from "../sandbox/protocol.ts";
+import type { AskAnswer, AskQuestion, ProposedEdit } from "../sandbox/protocol.ts";
 import type { ReconstructResult } from "../state/resume.ts";
 
 export interface Sampling {
@@ -101,7 +101,6 @@ export interface RlmResult {
   readonly answer: string;
   /** Legacy anchor edits retained for compatibility while older run-state rows exist. */
   readonly edits?: readonly ProposedEdit[];
-  readonly diffs?: readonly ProposedDiffEdit[];
   readonly iterations: number;
   readonly costUsd: number;
   readonly inputTokens: number;
@@ -113,8 +112,6 @@ export interface RlmResult {
 export interface InteractiveDeps {
   /** Called when the sandbox issues ask_user_question; undefined = feature disabled. */
   readonly onAskUserQuestion?: (questions: readonly AskQuestion[]) => Promise<AskAnswer[]>;
-  /** Called when the sandbox proposes a unified diff for native Pi edit flow; undefined = feature disabled. */
-  readonly onProposeDiff?: (diff: string, depth: number) => Promise<string>;
   /** Called when the sandbox issues todo; undefined = feature disabled. */
   readonly onTodo?: (action: string, params: Record<string, unknown>) => Promise<string>;
 }

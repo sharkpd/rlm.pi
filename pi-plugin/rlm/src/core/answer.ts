@@ -1,6 +1,6 @@
 /** Helpers for detecting and formatting the RLM final answer from a turn's REPL results. */
 
-import type { ProposedDiffEdit, ProposedEdit, ReplResult } from "../sandbox/protocol.ts";
+import type { ProposedEdit, ReplResult } from "../sandbox/protocol.ts";
 import { truncateOutput } from "../text/parsing.ts";
 
 /** First non-null final answer across a turn's executed blocks, or null. */
@@ -25,22 +25,6 @@ export function collectEdits(results: readonly ReplResult[]): ProposedEdit[] {
     if (edits && edits.length > 0) return [...edits];
   }
   return [];
-}
-
-/** Last cumulative diff proposal set reported by a turn. */
-export function collectDiffs(results: readonly ReplResult[]): ProposedDiffEdit[] {
-  for (let i = results.length - 1; i >= 0; i--) {
-    const diffs = results[i]?.diffs;
-    if (diffs && diffs.length > 0) return [...diffs];
-  }
-  return [];
-}
-
-/** Parses a ```diff fence from answer text; returns [] if none found. */
-export function tryExtractDiff(answer: string): ProposedDiffEdit[] {
-  const match = /```diff\n([\s\S]*?)```/.exec(answer);
-  if (!match) return [];
-  return [{ diff: match[1].trim() }];
 }
 
 /** True if any block in the turn raised an exception. Plain stderr does not count. */
