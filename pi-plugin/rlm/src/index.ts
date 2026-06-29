@@ -6,7 +6,6 @@ import { Markdown } from "@earendil-works/pi-tui";
 import { registerRlmCommand } from "./commands/rlm.ts";
 import { registerRlmConfigCommand } from "./commands/rlm-config.ts";
 import { createRlmTool } from "./tool/rlm-tool.ts";
-import { createApplyDiffTool } from "./tool/apply-diff-tool.ts";
 import { createReplTool } from "./tool/repl-tool.ts";
 import { loadSettings, mergeConfig, resolveModelId } from "./config/settings.ts";
 import { RlmController, cheapestModel } from "./mode/rlm-mode.ts";
@@ -59,8 +58,6 @@ export default function rlmExtension(pi: ExtensionAPI): void {
 
   // ── Tool registration ──
   pi.registerTool(createRlmTool(controller));
-  pi.registerTool(createApplyDiffTool());
-
   let guidePosted = false;
 
   pi.on("session_start", async (_event, ctx) => {
