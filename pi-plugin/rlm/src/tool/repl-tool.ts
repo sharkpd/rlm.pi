@@ -24,7 +24,7 @@ import { previewText } from "../text/preview.ts";
 import { mapPool } from "../util/concurrency.ts";
 import { LimitGuard } from "../core/limits.ts";
 import { checkResourceLimits } from "../core/resource-limits.ts";
-import type { RlmConfig, Sampling } from "../core/types.ts";
+import type { InteractiveDeps, RlmConfig, Sampling } from "../core/types.ts";
 import { SandboxManager } from "../sandbox/sandbox-manager.ts";
 import type { SubLlmHandlers } from "../sandbox/sandbox.ts";
 import type { ProposedEdit, ReplResult } from "../sandbox/protocol.ts";
@@ -64,12 +64,14 @@ class NativeBridgeState {
   currentParentId: string | undefined;
   currentDepth = 0;
   currentLimits: LimitGuard | null = null;
+  currentInteractive: InteractiveDeps | null = null;
 
-  swap(inv: { emitter: RlmEmitter; parentId?: string; depth: number; limits: LimitGuard }): void {
+  swap(inv: { emitter: RlmEmitter; parentId?: string; depth: number; limits: LimitGuard; interactive: InteractiveDeps }): void {
     this.currentEmitter = inv.emitter;
     this.currentParentId = inv.parentId;
     this.currentDepth = inv.depth;
     this.currentLimits = inv.limits;
+    this.currentInteractive = inv.interactive;
   }
 
   buildLlmHandlers(deps: {
@@ -224,6 +226,8 @@ class NativeBridgeState {
           maxTokens: deps.config.maxTokens,
           maxErrors: deps.config.maxErrors,
         },
+        onTodo: state.currentInteractive?.onTodo,
+        onAskUserQuestion: state.currentInteractive?.onAskUserQuestion,
       });
 
       try {
@@ -401,7 +405,7 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
           // Wire per-invocation mutable state only after the serialized exec slot
           // is active. Swapping earlier would let queued repl() calls overwrite
           // emitter/limits for the currently running REPL execution.
-          bridgeState.swap({ emitter, parentId: undefined, depth: 0, limits });
+          bridgeState.swap({ emitter, parentId: undefined, depth: 0, limits, interactive });
         });
         const elapsed = Date.now() - start;
         capturedStdout = result.stdout;
