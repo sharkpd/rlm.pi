@@ -20,24 +20,25 @@ import { errorMessage } from "./util/errors.ts";
 const BLOCKED_NATIVE_TOOLS = Object.freeze(new Set(["read", "grep", "bash", "write", "edit"]));
 
 export default function rlmExtension(pi: ExtensionAPI): void {
-  void setupRlmExtension(pi).catch((error) => {
-    console.warn(`[rlm] extension setup failed: ${errorMessage(error)}`);
-  });
-}
-
-async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
-  const persisted = await loadSettings();
-  const config = mergeConfig(persisted.config);
+  // Init synchronously with defaults — ensures commands/tools/handlers register before session_start
+  const config = mergeConfig({});
   const controller = new RlmController(config);
-  controller.savedWorkerRef = persisted.worker;
-
-  // ── SandboxManager — persistent singleton for native-mode repl() ──
   const sandboxManager = new SandboxManager({
     execTimeoutS: config.execTimeoutS,
     requestTimeoutMs: config.requestTimeoutMs,
     python: config.python,
     sandboxInitTimeoutMs: config.sandboxInitTimeoutMs,
   });
+
+  // Load persisted settings async — applied before session_start handler reads controller state
+  const settingsReady = loadSettings()
+    .then((persisted) => {
+      controller.config = mergeConfig(persisted.config);
+      controller.savedWorkerRef = persisted.worker;
+    })
+    .catch((err) => {
+      console.warn(`[rlm] settings load failed: ${errorMessage(err)}`);
+    });
 
   // ── Message renderers ──
   pi.registerMessageRenderer(
@@ -56,23 +57,21 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
   registerRlmConfigCommand(pi, controller);
 
   // ── Tool registration ──
-  // Existing rlm tool (stays for backward compat with /rlm mode)
   pi.registerTool(createRlmTool(controller));
   pi.registerTool(createApplyDiffTool());
 
-  // Native repl tool — re-registered each session to pick up model provider changes
   let guidePosted = false;
 
   pi.on("session_start", async (_event, ctx) => {
-    // Restore saved worker ref — retry lazily if registry/auth is not ready yet.
-    // session_start can fire before the provider/auth registry is fully loaded, so a miss
-    // here does NOT mean the ref is stale: RlmController.resolveModels() retries later.
+    // Wait for persisted settings before reading controller state
+    await settingsReady;
+
     if (controller.savedWorkerRef) {
       const resolved = resolveModelId(ctx.modelRegistry, controller.savedWorkerRef);
       if (resolved) controller.workerModel = resolved;
     }
 
-    // Register repl tool with current models (re-registers each session for provider changes)
+    // Re-register repl tool each session to pick up model provider changes
     const workerModel = controller.workerModel ?? cheapestModel(ctx.modelRegistry) ?? ctx.model;
     const model = ctx.model;
     if (workerModel && model) {
@@ -84,7 +83,7 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
           getModel: () => controller.resolveModels(ctx)?.model,
           getWorkerModel: () => controller.resolveModels(ctx)?.worker,
           registry: ctx.modelRegistry,
-          config,
+          config: controller.config,
         }));
       } catch { /* re-registration on provider change — ignore if already registered */ }
     }
@@ -139,8 +138,6 @@ async function setupRlmExtension(pi: ExtensionAPI): Promise<void> {
   });
 
   // ── Input routing: native mode — agent decides whether to use repl() or other tools ──
-  // The old black-box rlm() routing is removed; the main agent receives messages normally
-  // and chooses natively when to call repl(), read, grep, zebra-mcp, etc.
   pi.on("input", async (_event, _ctx) => {
     return { action: "continue" };
   });
