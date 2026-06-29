@@ -1,3 +1,12 @@
+# pi-rlm — Save 99% tokens, Recursive Language Model (RLM) for the Pi
+
+<div align="center">
+
+**Recursive Language Models (RLMs)**, implemented natively as a Pi extension —
+FULLY LOCAL.
+
+</div>
+
 <div align="center">
 
 <a href="https://arxiv.org/abs/2512.24601"><img src="../../assets/hero.png" alt="pi-rlm"></a>
@@ -11,17 +20,6 @@
 <sub>
 **English** &nbsp;·&nbsp; <a href="README.zh-CN.md">中文</a> &nbsp;·&nbsp; <a href="README.ru.md">Русский</a>
 </sub>
-
-</div>
-
----
-
-# pi-rlm — Save 99% tokens, Recursive Language Model (RLM) for the Pi
-
-<div align="center">
-
-**Recursive Language Models (RLMs)**, implemented natively as a Pi extension —
-FULLY LOCAL.
 
 </div>
 
