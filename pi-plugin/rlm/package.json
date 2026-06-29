@@ -1,6 +1,6 @@
 {
   "name": "@hicaru/pi-rlm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Save 99% tokens, Recursive Language Model (RLM) for the Pi",
   "license": "MIT",
