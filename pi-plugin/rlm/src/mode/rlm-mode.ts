@@ -131,6 +131,7 @@ export class RlmController {
         emitter: emitter ?? new RlmEmitter(),
         runState,
         onAskUserQuestion: interactive?.onAskUserQuestion,
+        onProposeDiff: interactive?.onProposeDiff,
         onTodo: interactive?.onTodo,
         limits: {
           maxBudgetUsd: this.config.maxBudgetUsd,

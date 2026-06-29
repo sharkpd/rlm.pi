@@ -160,8 +160,7 @@ export async function invokeNativeEditsFromDiff(
 }
 
 export function createNativeProposeDiffHandler(ctx: ExtensionContext): (diff: string, depth: number) => Promise<string> {
-  return async (diff: string, depth: number): Promise<string> => {
-    if (depth > 0) return formatError("propose_diff is only available at the root RLM depth");
+  return async (diff: string, _depth: number): Promise<string> => {
     const result = await invokeNativeEditsFromDiff(ctx, diff);
     if (!result.ok) return formatError(result.error.message);
     return `Native edit proposed ${result.value.edits} edit${result.value.edits === 1 ? "" : "s"} across ${result.value.files} file${result.value.files === 1 ? "" : "s"}.`;

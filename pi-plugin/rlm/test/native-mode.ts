@@ -117,7 +117,7 @@ async function testSandboxManager() {
 
   const r3 = await mgr.exec("print(callable(propose_diff))\nprint(propose_diff('--- a/x\\n+++ b/x\\n@@ -1 +1 @@\\n-a\\n+b\\n'))");
   check("SandboxManager — propose_diff function exists", r3.stdout.includes("True"));
-  check("SandboxManager — propose_diff rejects in non-root sandbox", r3.stdout.includes("root RLM depth"));
+  check("SandboxManager — propose_diff reaches bridge at non-root depth", r3.stdout.includes("native edit bridge not configured"));
 
   // Idempotent dispose
   await mgr.dispose();

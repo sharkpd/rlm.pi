@@ -60,12 +60,14 @@ class NativeBridgeState {
   currentParentId: string | undefined;
   currentDepth = 0;
   currentLimits: LimitGuard | null = null;
+  currentOnProposeDiff: ((diff: string, depth: number) => Promise<string>) | undefined = undefined;
 
-  swap(inv: { emitter: RlmEmitter; parentId?: string; depth: number; limits: LimitGuard }): void {
+  swap(inv: { emitter: RlmEmitter; parentId?: string; depth: number; limits: LimitGuard; onProposeDiff?: (diff: string, depth: number) => Promise<string> }): void {
     this.currentEmitter = inv.emitter;
     this.currentParentId = inv.parentId;
     this.currentDepth = inv.depth;
     this.currentLimits = inv.limits;
+    this.currentOnProposeDiff = inv.onProposeDiff;
   }
 
   buildLlmHandlers(deps: {
@@ -214,6 +216,7 @@ class NativeBridgeState {
         signal: deps.signal,
         emitter: emitter,
         onUsage: deps.onUsage as ((usage: Usage, role: "root" | "sub") => void) | undefined,
+        onProposeDiff: state.currentOnProposeDiff,
         limits: {
           maxBudgetUsd: deps.config.maxBudgetUsd,
           maxTimeoutMs: deps.config.maxTimeoutMs,
@@ -397,7 +400,7 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
           // Wire per-invocation mutable state only after the serialized exec slot
           // is active. Swapping earlier would let queued repl() calls overwrite
           // emitter/limits for the currently running REPL execution.
-          bridgeState.swap({ emitter, parentId: undefined, depth: 0, limits });
+          bridgeState.swap({ emitter, parentId: undefined, depth: 0, limits, onProposeDiff: interactive.onProposeDiff });
         });
         const elapsed = Date.now() - start;
         capturedStdout = result.stdout;

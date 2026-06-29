@@ -254,10 +254,9 @@ class Worker:
     def _propose_diff(self, diff: str) -> str:
         """Route a unified diff through the parent Pi native edit flow.
 
-        Only valid at root depth. The worker never writes files directly here.
+        Valid at any depth — the handler routes through the parent Pi native edit
+        flow, which is session-scoped. The worker never writes files directly here.
         """
-        if self.depth > 0:
-            return "Error: propose_diff is only available at the root RLM depth"
         diff_text = str(diff)
         if not diff_text.strip():
             return "Error: propose_diff requires a non-empty unified diff"
