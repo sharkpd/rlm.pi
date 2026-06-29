@@ -11,7 +11,7 @@ FULLY LOCAL.
 
 <a href="https://arxiv.org/abs/2512.24601"><img src="assets/hero.png" alt="pi-rlm"></a>
 
-<sub>Modeled on the Python reference <code>rlm</code> and the method in the RLM paper, reimplemented natively for Pi.</sub>
+<sub>Modeled on the method in the RLM paper, reimplemented natively for Pi.</sub>
 
 </div>
 
@@ -46,8 +46,8 @@ sub-LLM calls, hence the name.
 - Hard sub-problems **recurse** into child RLMs via `rlm_query` (depth-capped).
 - Everything runs **in-process** — the only external process is one local `python3` worker.
 
-> This is a Pi-plugin reimplementation of the RLM method (see the [RLM paper](https://arxiv.org/abs/2512.24601)
-> and the [Python `rlm` library](https://github.com/alexzhang13/rlm-minimal)). It is **not** the Python library.
+> This is a Pi-plugin reimplementation of the RLM method (see the [RLM paper](https://arxiv.org/abs/2512.24601)).
+> It is **not** the Python library.
 
 ## Install
 
@@ -127,15 +127,18 @@ These functions are injected into the model's Python namespace inside the REPL:
 |---|---|---|
 | Smart model | Pi's active model | the root orchestrator |
 | Worker model | cheapest available | answers `llm_query` |
-| Max recursion depth | `4` | `rlm_query` past this falls back to `llm_query` |
-| Max iterations | `30` | turns before the engine finalizes |
-| Budget ceiling | none | stops the whole tree when USD spend exceeds this |
-| Max consecutive errors | `5` | stops after N consecutive error turns |
-| REPL block timeout | `120s` | per-`repl`-block wall-clock (SIGALRM in the worker) |
-| Max concurrent sub-calls | `4` | pool size for `*_batched` |
-| Orchestrator addendum | on | "delegate, don't solve" guidance |
-| Trajectory compaction | on (0.65) | summarize history when it nears the context window |
-| `yolo` | off | apply proposed edits immediately, skipping the review popup |
+| Max recursion depth | `4` | `rlm_query` past this degrades to plain `llm_query` |
+| Max iterations | `30` | root REPL turns before RLM asks for a final answer |
+| REPL block timeout (s) | `120` | wall-clock limit for one Python REPL block (SIGALRM) |
+| Max concurrent sub-calls | `4` | concurrency pool size for `*_batched` |
+| Budget ceiling (USD) | none | total spend cap for the whole recursive tree |
+| Wall-clock ceiling (min) | none | total runtime cap for the whole recursive tree |
+| Token ceiling | none | total input+output token cap for the whole recursive tree |
+| Max consecutive errors | `5` | stop after N consecutive failing turns (none = off) |
+| Orchestrator addendum | on | divide-and-conquer guidance in the root system prompt |
+| Trajectory compaction | on (0.65) | summarize old turns when history nears the context window |
+| Root model output cap (tok) | `16384` | max output tokens per root-model turn |
+| Sandbox init timeout | `30000` ms | how long to wait for the Python worker to start |
 | `askUserQuestion` | on | expose `ask_user_question()` to the model |
 | `todo` | on | expose `todo()` to the model |
 

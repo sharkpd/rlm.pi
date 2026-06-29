@@ -36,8 +36,8 @@
 - 困难的子问题通过 `rlm_query` **递归**到子 RLM 中（设有深度限制）。
 - 所有内容均**在进程内**运行 —— 唯一的外部进程是一个本地的 `python3` worker。
 
-> 这是 RLM 方法的 Pi 插件重新实现（参见 [RLM 论文](https://arxiv.org/abs/2512.24601)
-> 和 [Python `rlm` 库](https://github.com/alexzhang13/rlm-minimal)）。它**不是**那个 Python 库。
+> 这是 RLM 方法的 Pi 插件重新实现（参见 [RLM 论文](https://arxiv.org/abs/2512.24601)）。
+> 它**不是**那个 Python 库。
 
 ## 工作原理
 
@@ -201,8 +201,7 @@ RLM_TEST_LIVE=1 bun run test/phase4.ts   # 引擎解决 20 个文档的“大海
 
 ## 背景
 
-基于 Python 参考实现 [`rlm`](https://github.com/alexzhang13/rlm-minimal) 和
-[RLM 论文](https://arxiv.org/abs/2512.24601) 中的方法，为 Pi 原生重新实现。
+基于 [RLM 论文](https://arxiv.org/abs/2512.24601) 中的方法，为 Pi 原生重新实现。
 
 如果您在研究中使用此项目，请引用原始 RLM 工作：
 

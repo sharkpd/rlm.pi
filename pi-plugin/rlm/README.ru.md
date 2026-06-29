@@ -36,8 +36,8 @@
 - Сложные подзадачи **рекурсивно** передаются в дочерние RLM через `rlm_query` (с ограничением глубины).
 - Все работает **in-process** — единственным внешним процессом является локальный worker `python3`.
 
-> This is a Pi-plugin reimplementation of the RLM method (see the [RLM paper](https://arxiv.org/abs/2512.24601)
-> and the [Python `rlm` library](https://github.com/alexzhang13/rlm-minimal)). It is **not** the Python library.
+> This is a Pi-plugin reimplementation of the RLM method (see the [RLM paper](https://arxiv.org/abs/2512.24601)).
+> It is **not** the Python library.
 
 ## Как это работает
 
@@ -181,7 +181,7 @@ RLM_TEST_LIVE=1 bun run test/phase4.ts   # engine solves a 20-doc needle-in-hays
 
 ## Общая информация
 
-Реализовано на основе эталонного проекта [`rlm`](https://github.com/alexzhang13/rlm-minimal) на Python и метода из [статьи RLM](https://arxiv.org/abs/2512.24601), с нативной переработкой для Pi.
+Реализовано на основе метода из [статьи RLM](https://arxiv.org/abs/2512.24601), с нативной переработкой для Pi.
 
 Если вы используете этот проект в своих исследованиях, пожалуйста, сошлитесь на оригинальную работу RLM:
 
