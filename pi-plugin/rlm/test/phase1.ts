@@ -22,6 +22,8 @@ async function main() {
   // parsing
   const blocks = findReplBlocks("think\n```repl\nprint(1)\n```\nmore\n```repl\nx=2\n```");
   check("findReplBlocks extracts 2 blocks", blocks.length === 2, JSON.stringify(blocks));
+  const nestedFenceBlocks = findReplBlocks("````repl\nprint('``` inner fence')\n````");
+  check("M6: length-matched repl fence allows inner triple backticks", nestedFenceBlocks[0]?.includes("inner fence") === true, JSON.stringify(nestedFenceBlocks));
   check("truncateOutput elides", truncateOutput("a".repeat(100), 40).includes("elided"));
   const sp = buildRlmSystemPrompt(
     { contextType: "json", contextChars: 5000 },
@@ -30,6 +32,8 @@ async function main() {
   check("prompt describes context as JSON array", sp.includes("list[dict]") && sp.includes("path"));
   check("prompt shows chunking example", sp.includes("chunk_size") && sp.includes("llm_query_batched"));
   check("prompt includes batched delegation idiom", sp.includes("llm_query_batched(["));
+  const childPrompt = buildRlmSystemPrompt({ contextType: "str", contextChars: 5000 }, { orchestrator: false });
+  check("F1: string context prompt does not describe list[dict]", !childPrompt.includes("list[dict]") && childPrompt.includes("plain string"), childPrompt.slice(0, 120));
   const metadata = buildMetadataLine({ contextType: "json", contextChars: 5000 });
   check(
     "metadata describes JSON array context",
@@ -84,6 +88,8 @@ async function main() {
   check("answer content is exposed before ready", r.answerContent === "draft partial", r.answerContent);
   r = await sandbox.exec("answer['content'] = '42'; answer['ready'] = True");
   check("answer.ready surfaces final answer", r.finalAnswer === "42", String(r.finalAnswer));
+  r = await sandbox.exec("answer['content'] = ''\nanswer['ready'] = False\nanswer['ready'] = True\nanswer['content'] = 'late content'");
+  check("F2: ready before content still surfaces same-block final answer", r.finalAnswer === "late content", String(r.finalAnswer));
 
   // stderr on error
   r = await sandbox.exec("import sys; print('progress warning', file=sys.stderr)");
@@ -99,10 +105,13 @@ async function main() {
   r = await sandbox.exec("print('alive')");
   check("sandbox survives a timed-out block", r.stdout.trim() === "alive", r.stdout.trim());
 
-  // M5: context restored from context_0 after the model clobbers it.
-  r = await sandbox.exec("context = 'clobbered'");
+  // F3: context is an ordinary variable — rebinds persist, deletion re-injects the original.
+  r = await sandbox.exec("context = 'changed'");
+  r = await sandbox.exec("print(context)");
+  check("F3: context rebind persists across exec calls", r.stdout.trim() === "changed", r.stdout.trim());
+  r = await sandbox.exec("del context");
   r = await sandbox.exec("print(type(context).__name__, len(context))");
-  check("M5: context restored from context_0 after clobber", r.stdout.trim() === "list 3", r.stdout.trim());
+  check("F3: deleted context is restored from context_0", r.stdout.trim() === "list 3", r.stdout.trim());
 
   // --- varNames surface + two-tier stdout elision (Algorithm 1: Metadata(stdout)) ---
   {
@@ -117,6 +126,8 @@ async function main() {
       !rr.varNames.includes("llm_query") && !rr.varNames.includes("context") && !rr.varNames.includes("answer")
       && !rr.varNames.includes("SHOW_VARS") && !rr.varNames.includes("context_0"),
       JSON.stringify(rr.varNames));
+    rr = await vb.exec("context_summary = 'kept'");
+    check("F6: context-prefixed user vars are visible", rr.varNames.includes("context_summary"), JSON.stringify(rr.varNames));
     // Small stdout flows through verbatim — no var list appended (nothing was lost).
     rr = await vb.exec("print(len(acc))");
     const small = formatReplOutputs([rr]);
@@ -124,7 +135,7 @@ async function main() {
     // Large stdout collapses to a head preview + elision note (not the full dump).
     rr = await vb.exec("big = 'a' * 5000; print(big)");
     const big = formatReplOutputs([rr]);
-    check("large stdout is elided in history", !big.includes("a".repeat(1000)) && big.includes("[+4800 chars"), big.slice(0, 80));
+    check("large stdout is elided in history", !big.includes("a".repeat(1000)) && big.includes("chars elided"), big.slice(0, 80));
     check("varNames listed only on elision", big.includes("REPL vars:"), big);
     await vb.dispose();
   }
@@ -135,8 +146,13 @@ async function main() {
       stdout: "x".repeat(5000), stderr: "", finalAnswer: null, answerContent: "",
       edits: [], raised: false, executionTimeMs: 0, varNames: [],
     }]);
-    check("elision note uses slices, not 'assign first'", noVars.includes("use slices to inspect"), noVars.slice(-80));
+    check("elision note uses slices, not 'assign first'", noVars.includes("inspect slices"), noVars.slice(-80));
     check("elision + empty vars gives fallback hint", noVars.includes("No REPL vars yet"), noVars.slice(-80));
+    const skipped = formatReplOutputs([{
+      stdout: "boom", stderr: "", finalAnswer: null, answerContent: "",
+      edits: [], raised: true, executionTimeMs: 0, varNames: [],
+    }], 2);
+    check("M2: skipped later block note is included", skipped.includes("2 later") && skipped.includes("skipped"), skipped);
   }
 
   // H3: a slow batched sub-LLM call must NOT trip the per-cell SIGALRM (paused while blocked in _rpc).

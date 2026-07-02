@@ -6,7 +6,7 @@
  */
 
 import { check, failureCount } from "./helpers.ts";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   AuthStorage,
@@ -51,6 +51,17 @@ async function main() {
     sessionManager: SessionManager.inMemory(),
     settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
   });
+
+  const installedPackagePath = join(getAgentDir(), "npm", "node_modules", "@hicaru", "pi-rlm");
+  const installedPackageConflict = existsSync(installedPackagePath) && extensionsResult.errors.some((err) =>
+    String((err as { readonly error?: unknown }).error).includes('Tool "rlm" conflicts'),
+  );
+  if (installedPackageConflict) {
+    console.log(`\n(skipping phase3: installed @hicaru/pi-rlm at ${installedPackagePath} already registers the rlm tool)`);
+    session.dispose();
+    finish();
+    return;
+  }
 
   check("extension loads without errors", extensionsResult.errors.length === 0, JSON.stringify(extensionsResult.errors));
 

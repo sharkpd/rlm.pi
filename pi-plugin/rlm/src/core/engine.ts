@@ -98,6 +98,10 @@ export function createEngine(deps: EngineDeps): RunRlm {
       maxErrors: deps.limits?.maxErrors,
       maxTokens: deps.limits?.maxTokens,
     }, input.resume?.usageSeed.durationMs ?? 0);
+    const remainingBudget = (): { readonly budgetUsd?: number; readonly timeoutMs?: number } => ({
+      budgetUsd: limits.remainingBudgetUsd(),
+      timeoutMs: limits.remainingTimeoutMs(),
+    });
 
     const llm = createLlmBridge({
       workerModel: deps.workerModel,
@@ -114,6 +118,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
       emitter,
       parentId: selfReportId,
       depth: input.depth,
+      remainingBudget,
     });
     const rlm = createRlmHandlers({
       run,
@@ -122,10 +127,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
       maxDepth: deps.config.maxDepth,
       maxConcurrent: deps.config.maxConcurrentSubcalls,
       parentNodeId: selfReportId,
-      remainingBudget: () => ({
-        budgetUsd: limits.remainingBudgetUsd(),
-        timeoutMs: limits.remainingTimeoutMs(),
-      }),
+      remainingBudget,
       onChildUsage: (costUsd, inputTokens, outputTokens) => {
         limits.addRaw(costUsd, inputTokens, outputTokens);
       },
@@ -150,7 +152,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
           rootPrompt: input.rootPrompt,
           context: { type: contextTypeLabel(input.context), chars: contextLength(input.context), json },
           models: { model: model.id, worker: deps.workerModel.id },
-          meta: { maxIterations: deps.config.maxIterations, maxDepth: deps.config.maxDepth, orchestrator: deps.config.orchestrator, pipeline: true },
+          meta: { maxIterations: deps.config.maxIterations, maxDepth: deps.config.maxDepth, orchestrator: deps.config.orchestrator, pipeline: deps.config.pipeline },
         };
         persistOn = await appendRow(deps.runState.cwd, deps.runState.dir, runId, header);
       }
@@ -166,7 +168,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
     };
 
     try {
-      const phaseHandlers = input.depth === 0
+      const phaseHandlers = input.depth === 0 && deps.config.pipeline
         ? {
             advancePhase: async (phase: string, summary: string | undefined) => {
               const outcome = validatePhaseTransition(phaseState?.current, phase);
@@ -219,6 +221,8 @@ export function createEngine(deps: EngineDeps): RunRlm {
         recursion: input.depth + 1 < deps.config.maxDepth,
         askUserQuestion: deps.config.askUserQuestion && input.depth === 0,
         todo: deps.config.todo,
+        pipeline: deps.config.pipeline && input.depth === 0,
+        maxPromptChars: deps.config.maxPromptChars,
       });
       let history: ChatMsg[] = input.resume ? input.resume.history : [{ role: "system", content: system }];
       let pendingReplOutputs: string | undefined = input.resume?.pendingReplOutputs;
@@ -247,11 +251,6 @@ export function createEngine(deps: EngineDeps): RunRlm {
         if (selfReportId) emitter.emitSubcallUpdated({ id: selfReportId, detail: `turn ${i + 1}/${deps.config.maxIterations}` });
         else emitter.emitTurn(i + 1, deps.config.maxIterations);
 
-        if (pendingReplOutputs) {
-          appendUserMessage(history, pendingReplOutputs);
-          pendingReplOutputs = undefined;
-        }
-
         if (deps.config.compaction) {
           const compactionDeps = {
             // Summarisation is done by the cheap worker model; the threshold stays on the
@@ -279,7 +278,12 @@ export function createEngine(deps: EngineDeps): RunRlm {
           }
         }
 
-        const gateMsg = phaseGatePrompt(phaseState, completedTurns);
+        if (pendingReplOutputs) {
+          appendUserMessage(history, pendingReplOutputs);
+          pendingReplOutputs = undefined;
+        }
+
+        const gateMsg = deps.config.pipeline ? phaseGatePrompt(phaseState, completedTurns) : undefined;
         const gateUserMsg = gateMsg ? `[${new Date().toISOString()}] ${gateMsg}` : undefined;
         appendUserMessage(history, buildTurnPrompt(i, deps.config.maxIterations, gateUserMsg));
 
@@ -320,7 +324,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
 
         limits.observe(turnHadError(turn.results));
         history.push({ role: "assistant", content: turn.response });
-        const turnReplOutputs = formatReplOutputs(turn.results);
+        const turnReplOutputs = formatReplOutputs(turn.results, turn.skippedBlocks);
         pendingReplOutputs = turnReplOutputs;
 
         if (persistOn && runId && deps.runState) {
@@ -343,7 +347,7 @@ export function createEngine(deps: EngineDeps): RunRlm {
         }
       }
       if (pendingReplOutputs) appendUserMessage(history, pendingReplOutputs);
-      const finalized = result(await finalize(history, deps, limits), deps.config.maxIterations, limits, editsAcc);
+      const finalized = result(await finalize(history, model, deps, limits), deps.config.maxIterations, limits, editsAcc);
       await recordTerminal("finalized", finalized);
       lastAnswer = finalized.answer;
       return finalized;
@@ -389,11 +393,11 @@ function result(answer: string, iterations: number, limits: LimitGuard, edits: P
 }
 
 /** Out of turns: ask the model for its best final answer (plain text). */
-async function finalize(history: ChatMsg[], deps: EngineDeps, limits: LimitGuard): Promise<string> {
+async function finalize(history: ChatMsg[], model: Model<Api>, deps: EngineDeps, limits: LimitGuard): Promise<string> {
   const finalHistory = [...history];
   appendUserMessage(finalHistory, FINALIZE_PROMPT);
   const { text, usage } = await modelComplete(finalHistory, {
-    model: deps.model,
+    model,
     registry: deps.registry,
     reasoning: deps.config.smartReasoning,
     signal: deps.signal,

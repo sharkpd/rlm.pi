@@ -72,7 +72,7 @@ function testGateHelpers(): void {
   const fresh = phaseGatePrompt({ current: "blueprint", advancedAt: 5 }, 6);
   check("gate silent early in phase", fresh === undefined, fresh ?? "undefined");
 
-  const terminal = phaseGatePrompt({ current: "validate", advancedAt: 8 }, 13);
+  const terminal = phaseGatePrompt({ current: "validate", advancedAt: 8 }, 12);
   check("gate fires in validate (no next phase)", terminal !== undefined && !terminal.includes("advance_phase"), terminal ?? "no prompt");
 }
 

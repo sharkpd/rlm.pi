@@ -26,6 +26,8 @@ async function main(): Promise<void> {
     check("x assigned", !r.raised);
     r = await sb1.exec("import math; y = math.pi");
     check("y assigned", !r.raised);
+    r = await sb1.exec("context_summary = 'snapshot me'");
+    check("context_summary assigned", !r.raised);
     const snonce = randomUUID();
     check("snapshot written", await sb1.snapshot(snapPath, snonce));
     await sb1.dispose();
@@ -37,6 +39,8 @@ async function main(): Promise<void> {
     check("restore succeeded", await sb2.restore(snapPath, snonce));
     r = await sb2.exec("print(x, round(y, 2))");
     check("vars restored correctly", r.stdout.trim() === "[1, 2, 3] 3.14" || r.stdout.includes("[1, 2, 3]"), r.stdout.trim());
+    r = await sb2.exec("print(context_summary)");
+    check("F6: context-prefixed user vars survive snapshot restore", r.stdout.trim() === "snapshot me", r.stdout.trim());
     r = await sb2.exec("print(llm_query('test'))");
     check("llm_query works after restore", r.stdout.includes("STUB"), r.stdout.trim());
     await sb2.dispose();

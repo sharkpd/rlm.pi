@@ -11,6 +11,7 @@ import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { RlmEmitter } from "../tool/rlm-events.ts";
 import { modelRef, resolveModelId } from "../config/settings.ts";
+import { checkResourceLimits, type RemainingResources } from "../core/resource-limits.ts";
 import type { Sampling } from "../core/types.ts";
 import { type ChatMsg, modelComplete } from "./model.ts";
 import { previewText } from "../text/preview.ts";
@@ -26,6 +27,8 @@ export interface LlmBridgeOptions {
   readonly sampling?: Sampling;
   readonly signal?: AbortSignal;
   readonly onUsage?: (usage: Usage, model: Model<Api>) => void;
+  /** Parent run's remaining budget/timeout; checked before every sub-call. */
+  readonly remainingBudget?: () => RemainingResources;
   /** Live RlmDetails reporting via onUpdate. */
   readonly emitter?: RlmEmitter;
   readonly parentId?: string;
@@ -49,6 +52,11 @@ export function createLlmBridge(opts: LlmBridgeOptions): LlmBridge {
 
   // Run one completion; report cost/tokens via `track` (a per-call or per-batch accumulator).
   async function complete1(prompt: string, model: string | null, track: (u: Usage) => void): Promise<string> {
+    const rem = opts.remainingBudget?.();
+    if (rem !== undefined) {
+      const limitError = checkResourceLimits(rem);
+      if (limitError !== undefined) return limitError;
+    }
     if (prompt.length > maxPromptChars) {
       return formatError(`sub-LLM prompt exceeded the size limit (${prompt.length.toLocaleString()} chars > ${maxPromptChars.toLocaleString()}). Shorten or chunk the prompt before calling llm_query.`);
     }

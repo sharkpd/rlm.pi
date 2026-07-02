@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-07-03
+
+### Changed
+
+- Made the phase pipeline opt-in (`pipeline: false` by default). This removes `advance_phase()`
+  from the default root prompt and disables phase-stall reminders unless explicitly enabled.
+- Reduced phase-stall reminders to the phase gate boundary instead of every turn after the gate.
+- Treat REPL `context` as an ordinary persistent environment variable within a run: mutations and
+  re-binds now persist, while deleted context slots are re-injected from the original payload.
+
+### Fixed
+
+- Corrected child RLM prompts for string contexts so recursive `rlm_query()` children no longer
+  receive repository `list[dict]` instructions for plain text input.
+- Preserved final answers when `answer["ready"]` is set before `answer["content"]` later in the
+  same REPL block.
+- Added mid-turn budget/timeout guards for `llm_query()` and `llm_query_batched()` calls.
+- Ensured out-of-turn finalization honors recursive `modelOverride` values.
+- Preserved user variables such as `context_summary` in snapshots and `SHOW_VARS()` output.
+- Kept the freshest REPL output out of lossy compaction summaries by compacting before appending
+  pending stdout metadata.
+- Derived prompt-cap guidance from `maxPromptChars` instead of mixing character and token units.
+- Stopped executing later ```repl``` blocks after an earlier block raises, and report skipped blocks.
+- Kept both head and tail slices when eliding large stdout.
+- Ignored stray sandbox parent messages fail-soft during sub-LLM RPC waits.
+- Matched fenced `repl` blocks by fence length so inner triple-backticks are allowed.
+
 ## [0.1.3] - 2026-06-30
 
 ### Fixed

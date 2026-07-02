@@ -48,6 +48,8 @@ export interface RlmConfig {
   maxErrors?: number;
   /** Append the orchestrator addendum to the system prompt. */
   orchestrator: boolean;
+  /** Enable the phase pipeline (advance_phase + stall nags) at depth 0. */
+  pipeline: boolean;
   /** Summarize the trajectory when it grows past the threshold (keeps the root window small). */
   compaction: boolean;
   /** Compact when estimated history tokens reach this fraction of the model's context window. */

@@ -5,7 +5,7 @@
  * blocks in order; everything else is prose the model uses to think out loud.
  */
 
-const FENCE = /```[ \t]*repl[ \t]*\r?\n([\s\S]*?)```/g;
+const FENCE = /(`{3,})[ \t]*repl[ \t]*\r?\n([\s\S]*?)\1/g;
 
 /** Return every ```repl``` block body, in document order. */
 export function findReplBlocks(text: string): string[] {
@@ -13,7 +13,7 @@ export function findReplBlocks(text: string): string[] {
   let m: RegExpExecArray | null;
   FENCE.lastIndex = 0;
   while ((m = FENCE.exec(text)) !== null) {
-    const code = m[1] ?? "";
+    const code = m[2] ?? "";
     if (code.trim()) blocks.push(code.replace(/\s+$/, ""));
   }
   return blocks;

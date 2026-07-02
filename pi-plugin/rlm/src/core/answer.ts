@@ -37,10 +37,11 @@ export function turnHadError(results: readonly ReplResult[]): boolean {
  * hist ← hist ∥ code ∥ Metadata(stdout)). */
 const SMALL_STDOUT_LIMIT = 800;
 const STDOUT_PREVIEW_LIMIT = 200;
+const STDOUT_TAIL_LIMIT = 200;
 const STDERR_LIMIT = 8_000;
 
 /** The REPL output fed back to the model as the next user message. */
-export function formatReplOutputs(results: readonly ReplResult[]): string {
+export function formatReplOutputs(results: readonly ReplResult[], skippedBlocks = 0): string {
   if (results.length === 0) {
     return "No ```repl``` block found in your response. Write one to interact with the REPL.";
   }
@@ -54,15 +55,18 @@ export function formatReplOutputs(results: readonly ReplResult[]): string {
     parts.push(`${head}${text}${formatStderr(r)}`);
   }
   const body = parts.join("\n\n");
+  const skipNote = skippedBlocks > 0
+    ? `\n\n[${skippedBlocks} later \`\`\`repl\`\`\` block(s) skipped because an earlier block raised — fix and re-run them]`
+    : "";
   // Orientation hint only when the model lost output to elision — otherwise it sees everything.
-  if (!hadElision) return body;
+  if (!hadElision) return `${body}${skipNote}`;
   // The REPL namespace is persistent across blocks in a turn, so the last block's varNames reflect
   // every variable created in any earlier block too.
   const varNames = results.at(-1)?.varNames ?? [];
   const hint = varNames.length > 0
     ? `REPL vars: ${varNames.join(", ")}`
     : `No REPL vars yet — assign results to variables before printing large outputs.`;
-  return `${body}\n\n${hint}`;
+  return `${body}${skipNote}\n\n${hint}`;
 }
 
 /** Stdout ≤ SMALL_STDOUT_LIMIT flows through verbatim; larger output keeps a short head + a note
@@ -71,8 +75,15 @@ function formatStdout(r: ReplResult): { text: string; elided: boolean } {
   const out = r.stdout.trim();
   if (!out) return { text: "(no stdout)", elided: false };
   if (out.length <= SMALL_STDOUT_LIMIT) return { text: out, elided: false };
-  const note = `[+${out.length - STDOUT_PREVIEW_LIMIT} chars elided — use slices to inspect: print(result[:500])]`;
-  return { text: `${out.slice(0, STDOUT_PREVIEW_LIMIT)}\n${note}`, elided: true };
+  const cut = out.length - STDOUT_PREVIEW_LIMIT - STDOUT_TAIL_LIMIT;
+  return {
+    text: [
+      out.slice(0, STDOUT_PREVIEW_LIMIT),
+      `[… ${cut} chars elided — full output stays in REPL vars; inspect slices: print(result[:500])]`,
+      out.slice(-STDOUT_TAIL_LIMIT),
+    ].join("\n"),
+    elided: true,
+  };
 }
 
 function formatStderr(r: ReplResult): string {

@@ -80,7 +80,7 @@ export function phaseGatePrompt(
 ): string | undefined {
   const turns = turnsInPhase(state, completedTurns);
   const phase = currentPhase(state);
-  if (turns >= PHASE_GATE_TURNS) {
+  if (turns >= PHASE_GATE_TURNS && turns % PHASE_GATE_TURNS === 0) {
     const next = nextPhase(phase);
     const hint = next
       ? ` Consider calling advance_phase("${next}") if your ${phase} work is complete.`

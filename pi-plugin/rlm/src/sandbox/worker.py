@@ -21,6 +21,7 @@ import io
 import json
 import os
 import pickle
+import re
 import signal
 import sys
 import time
@@ -28,10 +29,11 @@ import traceback
 from contextlib import contextmanager
 from typing import Any
 
-# Capture the REAL stdout/stdin before exec() redirects sys.stdout into a buffer.
+# Capture the REAL stdio before exec() redirects sys.stdout/sys.stderr into buffers.
 # All protocol writes must go to the real stdout even while user code's prints are captured.
 _REAL_STDOUT = sys.stdout
 _REAL_STDIN = sys.stdin
+_REAL_STDERR = sys.stderr
 
 
 def _builtin(name: str):
@@ -69,6 +71,7 @@ RESERVED = frozenset(
         "SHOW_VARS", "answer", "context",
     }
 )
+_CONTEXT_SLOT = re.compile(r"context(_\d+)?\Z")
 
 
 class _AnswerDict(dict):
@@ -131,11 +134,14 @@ class Worker:
                 if cur.get("ready") and self._final_answer is None:
                     self._final_answer = str(cur.get("content", ""))
             ns["answer"] = ans
-        # Restore context slots from immutable originals so REPL mutations don't persist.
+        # Context slots are ordinary variables (RLM paper: the context lives in the
+        # environment and the model may transform it in place). Re-inject only if the
+        # model deleted the name entirely; mutations and re-binds persist within the run.
+        # Resume reloads pristine context; keep derived resume-critical values in user vars.
         for idx, payload in self._ctx_payloads.items():
-            ns[f"context_{idx}"] = payload
+            ns.setdefault(f"context_{idx}", payload)
         if 0 in self._ctx_payloads:
-            ns["context"] = self._ctx_payloads[0]
+            ns.setdefault("context", self._ctx_payloads[0])
 
     def _user_var_names(self) -> list[str]:
         """User-created variable names — filters builtins, scaffold, and context slots.
@@ -146,7 +152,7 @@ class Worker:
         return [
             k for k in self.ns
             if not k.startswith("_")
-            and not k.startswith("context_")
+            and not _CONTEXT_SLOT.match(k)
             and k not in RESERVED
         ]
 
@@ -174,8 +180,11 @@ class Worker:
                 msg = json.loads(line)
                 if msg.get("type") == "llm_reply" and msg.get("rid") == rid:
                     return msg
-                # The parent only ever sends our reply mid-exec; anything else is a protocol error.
-                raise RuntimeError(f"unexpected parent message during sub-LLM request: {msg!r}")
+                # Stray/late message (e.g. a reply to an earlier timed-out request): skip it.
+                print(
+                    f"[rlm-sandbox] ignoring unexpected message during sub-LLM request: {str(msg)[:200]}",
+                    file=_REAL_STDERR,
+                )
         finally:
             if pause and remaining > 0:
                 signal.setitimer(signal.ITIMER_REAL, remaining)
@@ -352,6 +361,10 @@ class Worker:
         edits, self._staged_edits = self._staged_edits, []
         answer = self.ns.get("answer")
         answer_content = answer.get("content", "") if isinstance(answer, dict) else ""
+        # ready may have been flipped with empty content before content was assigned later
+        # in the same block; the dict's current content is the real submission.
+        if final is not None and not final.strip() and str(answer_content).strip():
+            final = str(answer_content)
         return {
             "stdout": stdout,
             "stderr": stderr,
@@ -381,7 +394,7 @@ class Worker:
         out, skipped = {}, []
         MAX_VAR_BYTES = 50 * 1024 * 1024
         for k, v in self.ns.items():
-            if k.startswith("_") or k.startswith("context") or k in RESERVED or k == "__builtins__":
+            if k.startswith("_") or _CONTEXT_SLOT.match(k) or k in RESERVED or k == "__builtins__":
                 continue
             try:
                 blob = s.dumps(v)
@@ -392,7 +405,7 @@ class Worker:
             except Exception:
                 skipped.append(k)
         if skipped:
-            print(f"[rlm-sandbox] snapshot skipped {len(skipped)} unpicklable/oversized vars: {skipped}", file=sys.stderr)
+            print(f"[rlm-sandbox] snapshot skipped {len(skipped)} unpicklable/oversized vars: {skipped}", file=_REAL_STDERR)
         tmp = path + ".tmp"
         with open(tmp, "wb") as f:
             s.dump({"nonce": nonce, "vars": out}, f)

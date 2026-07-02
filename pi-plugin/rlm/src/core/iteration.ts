@@ -17,6 +17,8 @@ export interface Turn {
   readonly results: readonly ReplResult[];
   readonly usage: Usage;
   readonly blocks: readonly string[];
+  /** Blocks not executed because an earlier block raised. */
+  readonly skippedBlocks: number;
 }
 
 export interface TurnDeps {
@@ -38,8 +40,12 @@ export async function runTurn(history: readonly ChatMsg[], sandbox: PythonSandbo
 
   const blocks = findReplBlocks(text);
   const results = new Array<ReplResult>(blocks.length);
+  let executed = 0;
   for (let i = 0; i < blocks.length; i++) {
     results[i] = await sandbox.exec(blocks[i]);
+    executed = i + 1;
+    if (results[i].raised) break;
   }
-  return { response: text, results, usage, blocks };
+  results.length = executed;
+  return { response: text, results, usage, blocks, skippedBlocks: blocks.length - executed };
 }

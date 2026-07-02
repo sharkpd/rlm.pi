@@ -20,6 +20,7 @@ export const DEFAULT_CONFIG: Readonly<RlmConfig> = Object.freeze({
   maxPromptChars: 400_000,
   maxErrors: 5,
   orchestrator: true,
+  pipeline: false,
   compaction: true,
   compactionThresholdPct: 0.65,
   python: "python3",

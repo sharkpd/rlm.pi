@@ -18,6 +18,21 @@ export interface SystemPromptOptions {
   readonly recursion?: boolean;
   readonly askUserQuestion?: boolean;
   readonly todo?: boolean;
+  readonly pipeline?: boolean;
+  readonly maxPromptChars?: number;
+}
+
+export type ContextKind = "files" | "text";
+
+/** "str" (raw string context, e.g. rlm_query children) → text; everything else → files. */
+export function contextKindOf(contextType: string): ContextKind {
+  return contextType === "str" ? "text" : "files";
+}
+
+const DEFAULT_PROMPT_CAP = 400_000;
+
+function promptCapTokensK(maxPromptChars: number): number {
+  return Math.round(maxPromptChars / 4_000);
 }
 
 function howToRunCode(): string {
@@ -28,29 +43,39 @@ function howToRunCode(): string {
   ].join(" ");
 }
 
-function replGlossary(recursion: boolean, askUserQuestion: boolean, todo: boolean): string {
-  const lines = [
-    "Available in the REPL:",
-    "- `context`: list[dict] — a pre-packed JSON array of every file in the repository. Each dict has",
-    "  keys: `path` (relative file path, str), `content` (file text, str), `tokens` (estimated count, int).",
-    "  For large repos, chunk `context` into batches and delegate to sub-LLMs — never dump raw file",
-    "  bodies into your own output.",
-    "",
-    "  Chunking example:",
-    "  ```python",
-    "  chunk_size = 5",
-    "  for i in range(0, len(context), chunk_size):",
-    "      batch = context[i:i+chunk_size]",
-    "      results = llm_query_batched([",
-    "          f\"Analyze {f['path']} ({f['tokens']} tok):\\n{f['content']}\"",
-    "          for f in batch",
-    "      ])",
-    "  ```",
+function replGlossary(kind: ContextKind, recursion: boolean, askUserQuestion: boolean, todo: boolean, pipeline: boolean): string {
+  const lines = ["Available in the REPL:"];
+  if (kind === "text") {
+    lines.push(
+      "- `context`: str — the raw text you must analyze. Probe it with slices",
+      "  (`print(context[:2000])`), split it programmatically, and delegate large chunks",
+      "  to sub-LLMs — never dump the whole string into your own output.",
+    );
+  } else {
+    lines.push(
+      "- `context`: list[dict] — a pre-packed JSON array of every file in the repository. Each dict has",
+      "  keys: `path` (relative file path, str), `content` (file text, str), `tokens` (estimated count, int).",
+      "  For large repos, chunk `context` into batches and delegate to sub-LLMs — never dump raw file",
+      "  bodies into your own output.",
+      "",
+      "  Chunking example:",
+      "  ```python",
+      "  chunk_size = 5",
+      "  for i in range(0, len(context), chunk_size):",
+      "      batch = context[i:i+chunk_size]",
+      "      results = llm_query_batched([",
+      "          f\"Analyze {f['path']} ({f['tokens']} tok):\\n{f['content']}\"",
+      "          for f in batch",
+      "      ])",
+      "  ```",
+    );
+  }
+  lines.push(
     "- `llm_query(prompt: str, model=None) -> str`: a single sub-LLM completion. Use for extraction,",
     "  summarization, or Q&A over a chunk of text.",
     "- `llm_query_batched(prompts: list[str], model=None) -> list[str]`: run several sub-LLM calls",
     "  concurrently; output order matches input order.",
-  ];
+  );
   if (askUserQuestion) {
     lines.push(
       "- `ask_user_question(questions: list[dict]) -> list[dict]`: pause and present the user",
@@ -86,11 +111,13 @@ function replGlossary(recursion: boolean, askUserQuestion: boolean, todo: boolea
       "    handle. Avoid excessive recursive sub-calls when a batched one-shot would suffice.",
     );
   }
-  lines.push(
-    "- `advance_phase(phase: str, summary=None) -> str`: transition the root RLM pipeline to the next phase.",
-    "  Valid phases in order: 'research' → 'blueprint' → 'implement' → 'validate'. You must advance forward",
-    "  one phase at a time. Only callable at the root depth; returns an error in sub-RLM contexts.",
-  );
+  if (pipeline) {
+    lines.push(
+      "- `advance_phase(phase: str, summary=None) -> str`: transition the root RLM pipeline to the next phase.",
+      "  Valid phases in order: 'research' → 'blueprint' → 'implement' → 'validate'. You must advance forward",
+      "  one phase at a time. Only callable at the root depth; returns an error in sub-RLM contexts.",
+    );
+  }
   lines.push(
     "- `SHOW_VARS() -> str`: list every variable currently in the REPL.",
     '- `answer`: a dict initialized to {"content": "", "ready": False}. To submit your final answer,',
@@ -99,24 +126,26 @@ function replGlossary(recursion: boolean, askUserQuestion: boolean, todo: boolea
   return lines.join("\n");
 }
 
-const ORCHESTRATOR_ADDENDUM = [
-  "As an RLM you are an **orchestrator, not a solver**. After you probe `context` and understand the",
-  "task, pause and plan: state how the task decomposes into sub-LLM / REPL steps, then execute one step",
-  "at a time, printing a small sample of each result to verify before moving on.",
-  "",
-  "Your own context window is small. Push every long-context operation — reading, summarizing,",
-  "classifying, answering sub-questions — into `llm_query` / `llm_query_batched` instead of pulling raw",
-  "text into your own message stream. Conversely, if a Python keyword/regex search over `context` would",
-  "already pin the answer, just read it directly. Aggregate the small results back in Python.",
-  "",
-  "Sub-call budget is finite on two axes: (1) per-prompt capacity — keep each sub-prompt modestly sized",
-  "(a useful ceiling is ~100K characters), packing a chunk of many items per call; (2) batch fan-out —",
-  "keep batches to roughly ~20 prompts. Fat prompts in small batches beat thousands of tiny prompts.",
-  "If the workload exceeds both at once, filter aggressively in Python first, then batch the survivors.",
-  "",
-  "Reserve your own tokens for high-level decisions: what to ask next, how to combine sub-LM outputs,",
-  "when to finalize. Delegate everything else. Do not submit a final answer before inspecting `context`.",
-].join("\n");
+function orchestratorAddendum(maxPromptChars: number): string {
+  return [
+    "As an RLM you are an **orchestrator, not a solver**. After you probe `context` and understand the",
+    "task, pause and plan: state how the task decomposes into sub-LLM / REPL steps, then execute one step",
+    "at a time, printing a small sample of each result to verify before moving on.",
+    "",
+    "Your own context window is small. Push every long-context operation — reading, summarizing,",
+    "classifying, answering sub-questions — into `llm_query` / `llm_query_batched` instead of pulling raw",
+    "text into your own message stream. Conversely, if a Python keyword/regex search over `context` would",
+    "already pin the answer, just read it directly. Aggregate the small results back in Python.",
+    "",
+    `Sub-call budget is finite on two axes: (1) per-prompt capacity — each sub-prompt must stay under ${maxPromptChars.toLocaleString()} characters`,
+    `(hard cap; ≈${promptCapTokensK(maxPromptChars)}K tokens), packing a chunk of many items per call; (2) batch fan-out —`,
+    "keep batches to roughly ~20 prompts. Fat prompts in small batches beat thousands of tiny prompts.",
+    "If the workload exceeds both at once, filter aggressively in Python first, then batch the survivors.",
+    "",
+    "Reserve your own tokens for high-level decisions: what to ask next, how to combine sub-LM outputs,",
+    "when to finalize. Delegate everything else. Do not submit a final answer before inspecting `context`.",
+  ].join("\n");
+}
 
 const INTRO = [
   "You are a Recursive Language Model (RLM): a language model with a prompt and a very important",
@@ -126,12 +155,14 @@ const INTRO = [
 /** Build the full RLM system prompt. */
 export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions = {}): string {
   const recursion = opts.recursion ?? false;
+  const kind = contextKindOf(meta.contextType);
+  const maxPromptChars = opts.maxPromptChars ?? DEFAULT_PROMPT_CAP;
   const parts = [
     INTRO,
     "",
     howToRunCode(),
     "",
-    replGlossary(recursion, opts.askUserQuestion ?? false, opts.todo ?? false),
+    replGlossary(kind, recursion, opts.askUserQuestion ?? false, opts.todo ?? false, opts.pipeline ?? false),
     "",
     "REPL stdout over ~800 characters is truncated to a short excerpt — large results stay in your",
     "REPL variables as buffers. Re-print only the slice you need (e.g. `print(result[:500])`); never",
@@ -140,9 +171,9 @@ export function buildRlmSystemPrompt(meta: PromptMeta, opts: SystemPromptOptions
     "Start by probing `context` (print a few lines, count items). Then build up an answer to the query.",
   ];
   if (opts.orchestrator ?? true) {
-    parts.push("", ORCHESTRATOR_ADDENDUM);
+    parts.push("", orchestratorAddendum(maxPromptChars));
   }
-  parts.push("", buildMetadataLine(meta));
+  parts.push("", buildMetadataLine(meta, maxPromptChars));
   return parts.join("\n");
 }
 
@@ -190,7 +221,7 @@ function nativeReplGlossary(): string {
     "    ])",
     "    # aggregate results into a buffer",
     "```",
-    "- Keep sub-prompts ~100K characters; batch ~20 prompts per call. Fat prompts in small batches > thousands of tiny prompts.",
+    `- Keep sub-prompts under ${DEFAULT_PROMPT_CAP.toLocaleString()} characters (≈${promptCapTokensK(DEFAULT_PROMPT_CAP)}K tokens); batch ~20 prompts per call. Fat prompts in small batches > thousands of tiny prompts.`,
     "- If your `context` is small enough (<20 files), you CAN read files directly via `read` / `grep` / `zebra-mcp`.",
     "- For medium/large repos, delegate to sub-LLMs via the REPL.",
     "",
@@ -249,10 +280,13 @@ export function buildNativeSystemPrompt(): string {
 export const NATIVE_PROMPT_STATIC = buildNativeSystemPrompt();
 
 /** The one-line context metadata, also reused by the per-turn prompt in headless mode. */
-export function buildMetadataLine(meta: PromptMeta): string {
-  const contextDesc = `Your context is a JSON array of ${meta.contextChars.toLocaleString()} total characters — list[dict] where each dict has keys "path" (str), "content" (str), and "tokens" (int). Use Python list slicing to chunk it into batches for sub-LLM delegation.`;
-  const tail = "Each sub-LLM call can handle roughly ~100k tokens at once.";
-  const dist = meta.contextStats
+export function buildMetadataLine(meta: PromptMeta, maxPromptChars = DEFAULT_PROMPT_CAP): string {
+  const kind = contextKindOf(meta.contextType);
+  const contextDesc = kind === "text"
+    ? `Your context is a plain string of ${meta.contextChars.toLocaleString()} characters. Use Python slicing to chunk it for sub-LLM delegation.`
+    : `Your context is a JSON array of ${meta.contextChars.toLocaleString()} total characters — list[dict] where each dict has keys "path" (str), "content" (str), and "tokens" (int). Use Python list slicing to chunk it into batches for sub-LLM delegation.`;
+  const tail = `Each sub-LLM call accepts up to ${maxPromptChars.toLocaleString()} characters (≈${promptCapTokensK(maxPromptChars)}K tokens).`;
+  const dist = kind === "files" && meta.contextStats
     ? ` Your context has ${meta.contextStats.files} files; per-file tokens run min ${meta.contextStats.min.toLocaleString()} / median ${meta.contextStats.median.toLocaleString()} / max ${meta.contextStats.max.toLocaleString()} — use this to gauge how many files fit per batch.`
     : "";
   const body = `${contextDesc} ${tail}${dist}`;

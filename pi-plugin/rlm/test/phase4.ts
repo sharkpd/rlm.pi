@@ -11,9 +11,9 @@ import { AuthStorage, type ModelRegistry, ModelRegistry as MR } from "@earendil-
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG } from "../src/config/defaults.ts";
 import { createEngine } from "../src/core/engine.ts";
+import { createLlmBridge, type LlmBridge } from "../src/bridge/llm-query.ts";
 import { createRlmHandlers } from "../src/bridge/rlm-query.ts";
 import { RlmEmitter } from "../src/tool/rlm-events.ts";
-import type { LlmBridge } from "../src/bridge/llm-query.ts";
 import type { RunRlm } from "../src/core/types.ts";
 import { cheapestModel } from "../src/mode/rlm-mode.ts";
 
@@ -174,6 +174,16 @@ async function main() {
   const available = registry.getAvailable();
   if (available.length > 0) {
     const fallbackModel = available[0];
+    const guardedLlm = createLlmBridge({
+      workerModel: fallbackModel,
+      registry,
+      remainingBudget: () => ({ budgetUsd: 0 }),
+    });
+    const guardedOut = await guardedLlm.llmQuery("must not call provider", null, 0);
+    const guardedOk = guardedOut === "Error: budget exhausted";
+    console.log(`${guardedOk ? "✓" : "✗"} F4: llm_query refuses exhausted budget before completion`);
+    if (!guardedOk) process.exit(1);
+
     const model = cheapestModel(registry) ?? fallbackModel;
     if (model === undefined) {
       console.error("no fallback model available");

@@ -91,6 +91,11 @@ class NativeBridgeState {
       modelRef(model ? (resolveModelId(deps.registry, model) ?? workerModel()) : workerModel()) ?? workerModel().id;
 
     async function complete1(prompt: string, model: string | null, track: (u: Usage) => void): Promise<string> {
+      const limits = state.currentLimits;
+      if (limits) {
+        const limitError = checkResourceLimits({ budgetUsd: limits.remainingBudgetUsd(), timeoutMs: limits.remainingTimeoutMs() });
+        if (limitError !== undefined) return limitError;
+      }
       if (prompt.length > deps.maxPromptChars) {
         return formatError(`sub-LLM prompt exceeded size limit (${prompt.length.toLocaleString()} chars > ${deps.maxPromptChars.toLocaleString()})`);
       }
@@ -107,6 +112,7 @@ class NativeBridgeState {
           reasoning: deps.sampling?.reasoning,
           signal: deps.signal,
         });
+        limits?.addUsage(res.usage);
         track(res.usage);
         return res.text;
       } catch (err) {
@@ -132,7 +138,6 @@ class NativeBridgeState {
           costUsd: cost, tokens, resultPreview: previewText(out),
           detail: isErrorText(out) ? out : undefined,
         });
-        state.currentLimits?.addRaw(cost, 0, tokens);
         return out;
       },
 
@@ -155,7 +160,6 @@ class NativeBridgeState {
           status: error ? "error" : "done", costUsd: cost, tokens,
           resultPreview: previewText(out[0] ?? ""), detail: error,
         });
-        state.currentLimits?.addRaw(cost, 0, tokens);
         return out;
       },
     };
