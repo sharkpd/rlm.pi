@@ -27,6 +27,7 @@ export interface LlmReply {
 export type ParentMessage = WorkerRequest | LlmReply;
 
 export interface ProposedEdit {
+  readonly id: string;
   readonly path: string;
   readonly oldText: string;
   readonly newText: string;

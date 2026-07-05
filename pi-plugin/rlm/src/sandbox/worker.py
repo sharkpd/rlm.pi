@@ -132,6 +132,7 @@ class Worker:
         self.ns = {"__builtins__": _SAFE_BUILTINS.copy(), "__name__": "__main__"}
         self._ctx_payloads: dict[int, Any] = {}
         self._staged_edits: list[dict[str, str]] = []
+        self._edit_counter = 0
         self._nudged: set[str] = set()
         self._restore_scaffold()
 
@@ -325,8 +326,10 @@ class Worker:
     def _stage_edit(self, path: str, old_text: str, new_text: str) -> str:
         if not isinstance(path, str) or not isinstance(old_text, str) or not isinstance(new_text, str):
             return "Error: path, old_text, new_text must be strings"
-        self._staged_edits.append({"path": path, "oldText": old_text, "newText": new_text})
-        return f"Staged edit for {path} ({len(old_text)} → {len(new_text)} chars)"
+        self._edit_counter += 1
+        edit_id = f"e{self._edit_counter}"
+        self._staged_edits.append({"id": edit_id, "path": path, "oldText": old_text, "newText": new_text})
+        return edit_id
 
     def _advance_phase(self, phase: str, summary: str | None = None) -> str:
         """Transition the root RLM pipeline to a new phase.

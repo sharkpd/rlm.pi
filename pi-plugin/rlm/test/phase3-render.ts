@@ -133,8 +133,8 @@ const completedDetails: RlmDetails = {
   totals: { costUsd: 0.0423, tokens: 12300 },
   answer: "I've created the dashboard component with responsive charts and tables.\n\nThe component supports:\n- Auto-sizing charts via Recharts ResponsiveContainer\n- Dark/light theme support\n- Loading and error states\n- TypeScript props for chart configuration",
   edits: [
-    { path: "src/components/Dashboard.tsx", oldText: "", newText: "// new file" },
-    { path: "src/App.tsx", oldText: "// old import", newText: "import Dashboard from './components/Dashboard'" },
+    { id: "e1", path: "src/components/Dashboard.tsx", oldText: "", newText: "// new file" },
+    { id: "e2", path: "src/App.tsx", oldText: "// old import", newText: "import Dashboard from './components/Dashboard'" },
   ],
 };
 

@@ -34,6 +34,7 @@ import type { ReplDetails } from "./repl-details.ts";
 import type { RlmSubcall } from "./rlm-details.ts";
 import { createEngine } from "../core/engine.ts";
 import { formatCost, formatTokens, spinnerFrame } from "../ui/theme.ts";
+import type { EditRegistry } from "../registry/edit-registry.ts";
 import { errorMessage, formatError, isErrorText } from "../util/errors.ts";
 import {
   headlineStatusGlyph,
@@ -59,29 +60,49 @@ export interface ReplResultText {
   readonly surfacedEdits: readonly ProposedEdit[] | undefined;
 }
 
+function countLines(text: string): number {
+  if (text.length === 0) return 0;
+  let count = 1;
+  for (const ch of text) if (ch === "\n") count++;
+  return count;
+}
+
+function stagedEditSummary(edits: readonly ProposedEdit[]): string {
+  const rows = new Array<string>(edits.length);
+  for (let i = 0; i < edits.length; i++) {
+    const edit = edits[i];
+    rows[i] = `  ${edit.id}  ${edit.path}  (-${countLines(edit.oldText)}/+${countLines(edit.newText)} lines)`;
+  }
+  return [
+    "STAGED_EDITS (apply by id with apply_edits; do NOT re-type content):",
+    ...rows,
+  ].join("\n");
+}
+
 /**
  * Assemble the model-visible text for a repl() result: cap stdout, append a zero-subcall
- * delegation nudge (suppressed when edits were staged), and append the STAGED_EDITS block
- * AFTER capping so edit JSON is never truncated. Extracted as a pure function so the
- * capping/ordering invariants are testable independently of the sandbox.
+ * delegation nudge (suppressed when edits were staged), and summarize staged edits by ID
+ * without exposing oldText/newText bodies to the root model.
  */
 export function buildReplResultText(
   stdout: string,
-  answerContent: string | undefined,
+  finalAnswer: string | undefined,
   edits: readonly ProposedEdit[],
   raised: boolean,
   subcalls: readonly RlmSubcall[],
 ): ReplResultText {
-  const rawText = stdout || answerContent || "(no output)";
+  const answerSubmitted = finalAnswer !== undefined;
+  const rawText = answerSubmitted
+    ? `ANSWER_SUBMITTED (${finalAnswer.length} chars) — delivered to user. Do not restate it.`
+    : stdout || "(no output)";
   const surfacedEdits = surfaceReplEdits(edits, raised);
-  const editsBlock = surfacedEdits
-    ? `\n\nSTAGED_EDITS:\n${JSON.stringify(surfacedEdits)}`
-    : "";
-  // Model-visible text is capped; the caller keeps full stdout in `details.output` for the TUI.
-  const cappedText = capReplResultText(rawText) ?? rawText;
+  const editsBlock = surfacedEdits ? `\n\n${stagedEditSummary(surfacedEdits)}` : "";
+  const modelText = rawText + editsBlock;
+  // Model-visible text is capped; the caller keeps full stdout/final answer in `details` for the TUI.
+  const cappedText = capReplResultText(modelText) ?? modelText;
   const delegated = subcalls.some((s) => s.kind === "llm" || s.kind === "batch" || s.kind === "rlm");
-  const nudge = surfacedEdits ? undefined : replDelegationNudge(rawText.length, delegated);
-  return { text: cappedText + (nudge ?? "") + editsBlock, surfacedEdits };
+  const nudge = surfacedEdits || answerSubmitted ? undefined : replDelegationNudge(rawText.length, delegated);
+  return { text: cappedText + (nudge ?? ""), surfacedEdits };
 }
 
 // ── Mutable bridge state (handler indirection) ──
@@ -315,6 +336,7 @@ export interface ReplToolDeps {
   readonly getModel?: () => Model<Api> | undefined;
   readonly getWorkerModel?: () => Model<Api> | undefined;
   readonly registry: ModelRegistry;
+  readonly editRegistry?: EditRegistry;
   readonly config: RlmConfig;
   readonly signal?: AbortSignal;
   readonly onUsage?: (usage: Usage, role: "sub") => void;
@@ -322,7 +344,7 @@ export interface ReplToolDeps {
 }
 
 export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplToolParams, ReplDetails> {
-  const { sandboxManager, workerModel, registry, config, signal, onUsage } = deps;
+  const { sandboxManager, workerModel, registry, editRegistry, config, signal, onUsage } = deps;
   const bridgeState = new NativeBridgeState();
 
   // Build handlers once — llm/rlm use mutable refs, interactive is session-stable
@@ -464,13 +486,15 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
 
         if (queuedId) emitter.emitSubcallUpdated({ id: queuedId, status: "done" });
 
+        const finalAnswer = result.finalAnswer ?? undefined;
         const { text: resultText, surfacedEdits } = buildReplResultText(
           result.stdout,
-          result.answerContent,
+          finalAnswer,
           result.edits,
           result.raised,
           store.getSubcalls(),
         );
+        editRegistry?.registerAll(surfacedEdits);
 
         const details: ReplDetails = {
           status: "done",
@@ -479,10 +503,14 @@ export function createReplTool(deps: ReplToolDeps): ToolDefinition<typeof ReplTo
           executionTimeMs: elapsed,
           subcalls: store.getSubcalls(),
           totals: store.getTotals(),
+          finalAnswer,
           edits: surfacedEdits,
         };
+        const progressText = finalAnswer !== undefined
+          ? `ANSWER_SUBMITTED (${finalAnswer.length} chars)`
+          : result.stdout.slice(0, 500) || "(no output)";
         // Final progressive update
-        onUpdate?.({ content: [{ type: "text", text: result.stdout.slice(0, 500) || "(no output)" }], details });
+        onUpdate?.({ content: [{ type: "text", text: progressText }], details });
         return { content: [{ type: "text", text: resultText }], details };
       } catch (e) {
         progressStatus = "error";

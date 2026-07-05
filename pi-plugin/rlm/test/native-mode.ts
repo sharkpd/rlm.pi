@@ -6,12 +6,18 @@
  * and ReplDetails type structure.
  */
 
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { check, fail, failureCount } from "./helpers.ts";
 import { SandboxManager } from "../src/sandbox/sandbox-manager.ts";
 import { formatForLLM } from "../src/context/repomix-context.ts";
 import { buildNativeSystemPrompt } from "../src/prompts/system.ts";
-import { surfaceReplEdits } from "../src/tool/repl-tool.ts";
+import { buildReplResultText, surfaceReplEdits } from "../src/tool/repl-tool.ts";
+import { createApplyEditsTool } from "../src/tool/apply-edits-tool.ts";
+import { EditRegistry } from "../src/registry/edit-registry.ts";
 import type { ContextBundle } from "../src/context/repomix-context.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 
 // ── formatForLLM tests ──
@@ -59,25 +65,86 @@ function testNativeSystemPrompt() {
   check("buildNativeSystemPrompt — mentions orchestrator", prompt.includes("orchestrator, not a solver"));
   check("buildNativeSystemPrompt — mentions chunking", prompt.includes("chunk_size"));
   check("buildNativeSystemPrompt — mentions answer dict", prompt.includes("answer[\"ready\"]"));
+  check("buildNativeSystemPrompt — mentions apply_edits", prompt.includes("apply_edits({ ids"));
+  check("buildNativeSystemPrompt — no stale edit relay", !prompt.includes("relay STAGED_EDITS to `edit`"));
   check("buildNativeSystemPrompt — mentions native tools", prompt.includes("zebra-mcp"));
 }
 
 function testStagedEditSurfacing() {
-  const edits = Object.freeze([{ path: "a.ts", oldText: "old", newText: "new" }]);
+  const edits = Object.freeze([{ id: "e1", path: "a.ts", oldText: "old", newText: "new" }]);
   check("surfaceReplEdits — successful exec exposes staged edits", surfaceReplEdits(edits, false) === edits);
   check("surfaceReplEdits — raised exec discards staged edits", surfaceReplEdits(edits, true) === undefined);
   check("surfaceReplEdits — empty edits stay hidden", surfaceReplEdits(Object.freeze([]), false) === undefined);
 }
 
+function testAnswerSubmittedSummary() {
+  const result = buildReplResultText("stdout", "final answer", Object.freeze([]), false, []);
+  check("buildReplResultText — final answer by reference", result.text.includes("ANSWER_SUBMITTED (12 chars)"));
+  check("buildReplResultText — final answer content hidden", !result.text.includes("final answer"));
+}
+
+function contextFor(cwd: string): ExtensionContext {
+  return {
+    ui: undefined as unknown as ExtensionContext["ui"],
+    mode: "tui",
+    hasUI: false,
+    cwd,
+    sessionManager: undefined as unknown as ExtensionContext["sessionManager"],
+    modelRegistry: undefined as unknown as ExtensionContext["modelRegistry"],
+    model: undefined,
+    isIdle: () => true,
+    isProjectTrusted: () => false,
+    signal: undefined,
+    abort: () => {},
+    hasPendingMessages: () => false,
+    shutdown: () => {},
+    getContextUsage: () => undefined,
+    compact: () => {},
+    getSystemPrompt: () => "",
+  };
+}
+
+async function testApplyEditsTool() {
+  const cwd = await mkdtemp(join(tmpdir(), "rlm-apply-edits-"));
+  try {
+    const registry = new EditRegistry();
+    const tool = createApplyEditsTool(registry);
+    const ctx = contextFor(cwd);
+
+    await writeFile(join(cwd, "a.ts"), "const value = 'old';\n", "utf8");
+    registry.registerAll([{ id: "e1", path: "a.ts", oldText: "old", newText: "new" }]);
+    const success = await tool.execute("apply-1", { ids: ["e1"] }, undefined, undefined, ctx);
+    const updated = await readFile(join(cwd, "a.ts"), "utf8");
+    check("apply_edits — applies known id", success.details?.status === "done" && updated.includes("new"));
+    check("apply_edits — deletes applied id", registry.get("e1") === undefined);
+
+    const unknown = await tool.execute("apply-2", { ids: ["missing"] }, undefined, undefined, ctx);
+    check("apply_edits — unknown id fails softly", unknown.details?.status === "error" && unknown.details.errors[0]?.id === "missing");
+
+    await writeFile(join(cwd, "b.ts"), "old old\n", "utf8");
+    registry.registerAll([{ id: "e2", path: "b.ts", oldText: "old", newText: "new" }]);
+    const mismatch = await tool.execute("apply-3", { ids: ["e2"] }, undefined, undefined, ctx);
+    check("apply_edits — duplicate anchor rejected", mismatch.details?.status === "error" && mismatch.details.errors[0]?.error.includes("anchor occurs 2"));
+    check("apply_edits — rejected id remains registered", registry.get("e2") !== undefined);
+
+    registry.clear();
+    check("EditRegistry — clear removes unapplied ids", registry.get("e2") === undefined);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
 // ── SandboxManager tests ──
 
 async function testSandboxManager() {
+  let discardedCount = 0;
   const mgr = new SandboxManager({
     execTimeoutS: 30,
     requestTimeoutMs: 10_000,
     python: "python3",
     sandboxInitTimeoutMs: 30_000,
     maxPromptChars: 400_000,
+    onSandboxDiscarded: () => { discardedCount++; },
   });
 
   // Lifecycle
@@ -108,10 +175,10 @@ async function testSandboxManager() {
     "print(stage_edit('bar.ts', 'a', 'b'))",
   ].join("\n"));
   const expectedEdits = JSON.stringify([
-    { path: "test.ts", oldText: "old", newText: "new" },
-    { path: "bar.ts", oldText: "a", newText: "b" },
+    { id: "e1", path: "test.ts", oldText: "old", newText: "new" },
+    { id: "e2", path: "bar.ts", oldText: "a", newText: "b" },
   ]);
-  check("SandboxManager — stage_edit reports staged edit", staged.stdout.includes("Staged edit for test.ts"));
+  check("SandboxManager — stage_edit returns edit IDs", staged.stdout.includes("e1") && staged.stdout.includes("e2"));
   check("SandboxManager — stage_edit returns edits", JSON.stringify(staged.edits) === expectedEdits);
 
   const cleared = await mgr.exec("print('no edits staged')");
@@ -120,8 +187,10 @@ async function testSandboxManager() {
   // Idempotent dispose
   await mgr.dispose();
   check("SandboxManager — not alive after dispose", !mgr.isAlive);
+  check("SandboxManager — discard callback fires on dispose", discardedCount === 1, String(discardedCount));
   await mgr.dispose(); // second dispose should not throw
   check("SandboxManager — double dispose safe", true);
+  check("SandboxManager — double dispose does not double discard", discardedCount === 1, String(discardedCount));
 }
 
 // ── Main ──
@@ -135,6 +204,15 @@ async function main() {
 
   console.log("\n─── Staged edit surfacing ───");
   testStagedEditSurfacing();
+  testAnswerSubmittedSummary();
+
+  console.log("\n─── apply_edits ───");
+  try {
+    await testApplyEditsTool();
+  } catch (err) {
+    console.error("apply_edits tests failed:", err instanceof Error ? err.message : String(err));
+    fail();
+  }
 
   console.log("\n─── SandboxManager ───");
   try {
@@ -148,4 +226,4 @@ async function main() {
   process.exit(failureCount() > 0 ? 1 : 0);
 }
 
-main();
+await main();

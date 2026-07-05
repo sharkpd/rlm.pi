@@ -126,7 +126,7 @@ async function main() {
 
   // ── repl result assembly (exercises the real production function, not a hand-built concatenation) ──
   const bigStdout = "z".repeat(10_000);
-  const editsFixture = [{ path: "a.ts", oldText: "x", newText: "y" }];
+  const editsFixture = [{ id: "e1", path: "a.ts", oldText: "x", newText: "y" }];
   const llmSubcall = { id: "s1", depth: 0, kind: "llm" as const, label: "q", status: "done" as const, startedAt: 0, costUsd: 0, tokens: 0 };
   // Big stdout + no edits + no subcalls → stdout is capped and the zero-subcall nudge fires.
   const solo = buildReplResultText(bigStdout, undefined, [], false, []);
@@ -135,12 +135,12 @@ async function main() {
     solo.text.includes("repl() stdout capped") && solo.text.includes("0 sub-LLM calls"),
     solo.text.slice(-90),
   );
-  // Big stdout + staged edits → STAGED_EDITS JSON survives capping (appended AFTER the cap).
+  // Big stdout + staged edits → compact STAGED_EDITS summary survives capping without edit bodies.
   const staged = buildReplResultText(bigStdout, undefined, editsFixture, false, []);
   check(
-    "staged edits survive stdout capping",
-    staged.text.includes("STAGED_EDITS:") && staged.text.endsWith('"newText":"y"}]'),
-    staged.text.slice(-80),
+    "staged edits surface by id without edit bodies",
+    staged.text.includes("STAGED_EDITS (apply by id") && staged.text.includes("e1  a.ts") && !staged.text.includes("oldText"),
+    staged.text.slice(-120),
   );
   check("staged edits suppress the delegation nudge", !staged.text.includes("sub-LLM calls"));
   // A delegation subcall present → no nudge even with big stdout and no edits.

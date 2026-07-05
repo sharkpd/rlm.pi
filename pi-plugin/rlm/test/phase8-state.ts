@@ -32,7 +32,7 @@ async function main(): Promise<void> {
 
     const t1: TurnRow = { kind: "turn", turn: 1, ts: new Date().toISOString(), response: "Let me check.", replOutputs: "[block 1]\nlist 3", error: false, usage: { costUsd: 0.01, inputTokens: 100, outputTokens: 50 }, cumulativeDurationMs: 1000, snapshotOk: true };
     check("turn 1 appended", await appendRow(cwd, dir, runId, t1));
-    const t2: TurnRow = { kind: "turn", turn: 2, ts: new Date().toISOString(), response: "Found something.", replOutputs: "[block 1]\nsome output", answerContent: "partial", edits: [{ path: "a.ts", oldText: "old", newText: "new" }], error: false, usage: { costUsd: 0.02, inputTokens: 200, outputTokens: 100 }, cumulativeDurationMs: 2500, snapshotOk: true };
+    const t2: TurnRow = { kind: "turn", turn: 2, ts: new Date().toISOString(), response: "Found something.", replOutputs: "[block 1]\nsome output", answerContent: "partial", edits: [{ id: "e1", path: "a.ts", oldText: "old", newText: "new" }], error: false, usage: { costUsd: 0.02, inputTokens: 200, outputTokens: 100 }, cumulativeDurationMs: 2500, snapshotOk: true };
     check("turn 2 appended", await appendRow(cwd, dir, runId, t2));
     const t3: TurnRow = { kind: "turn", turn: 3, ts: new Date().toISOString(), response: "Final answer.", replOutputs: "[block 1]\nfinal output", answerContent: "THE ANSWER", error: false, usage: { costUsd: 0.03, inputTokens: 150, outputTokens: 75 }, cumulativeDurationMs: 5000, snapshotOk: false };
     check("turn 3 appended", await appendRow(cwd, dir, runId, t3));

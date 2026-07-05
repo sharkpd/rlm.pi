@@ -21,6 +21,8 @@ export interface ReplDetails {
   readonly subcalls: readonly RlmSubcall[];
   /** Running totals for this repl() call (cost + tokens from sub-LLM calls). */
   readonly totals: { readonly costUsd: number; readonly tokens: number };
-  /** File edits staged inside the REPL for native relay through edit(). */
+  /** Final answer submitted through answer["ready"] without echoing it to the model. */
+  readonly finalAnswer?: string;
+  /** File edits staged inside the REPL for native relay through apply_edits(). */
   readonly edits?: readonly ProposedEdit[];
 }

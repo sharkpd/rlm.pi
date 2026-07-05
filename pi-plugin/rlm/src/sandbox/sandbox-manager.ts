@@ -15,6 +15,7 @@ export interface SandboxManagerConfig {
   readonly sandboxInitTimeoutMs: number;
   readonly maxPromptChars: number;
   readonly signal?: AbortSignal;
+  readonly onSandboxDiscarded?: () => void;
 }
 
 export class SandboxManager {
@@ -118,6 +119,7 @@ export class SandboxManager {
         try { await this.sandbox.dispose(); } catch { /* already dead */ }
         this.sandbox = null;
         this.contextLoaded = false;
+        this.config.onSandboxDiscarded?.();
       }
       throw err;
     } finally {
@@ -141,7 +143,10 @@ export class SandboxManager {
     if (this.disposed) return;
     this.disposed = true;
     await this.sandbox?.dispose();
-    this.sandbox = null;
-    this.contextLoaded = false;
+    if (this.sandbox !== null) {
+      this.sandbox = null;
+      this.contextLoaded = false;
+      this.config.onSandboxDiscarded?.();
+    }
   }
 }
