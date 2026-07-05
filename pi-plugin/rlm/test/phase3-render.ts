@@ -265,8 +265,8 @@ console.log("\n=== apply_edits renderResult expanded ===");
   check("apply_edits expanded shows failed file path", text.includes("src/App.tsx"));
   check("apply_edits expanded shows per-file line stats", text.includes("+10") && text.includes("-5"));
   check("apply_edits expanded shows error text", text.includes("anchor occurs 0 times"));
-  check("apply_edits expanded shows old body", text.includes("old dashboard body"));
-  check("apply_edits expanded shows new body", text.includes("new dashboard body"));
+  check("apply_edits expanded shows colored removed body", text.includes("- old dashboard body"));
+  check("apply_edits expanded shows colored added body", text.includes("+ new dashboard body"));
 }
 
 console.log("\n=== renderCall ===");

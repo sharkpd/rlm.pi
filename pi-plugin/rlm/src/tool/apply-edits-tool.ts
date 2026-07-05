@@ -149,14 +149,23 @@ function limitPatchText(text: string): string {
   return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
 }
 
+function renderPatchLines(text: string, prefix: string, color: "error" | "success", theme: Theme): string {
+  const limitedText = limitPatchText(text);
+  const lines = limitedText.split("\n");
+  const rendered = new Array<string>(lines.length);
+  for (let i = 0; i < lines.length; i++) {
+    rendered[i] = theme.fg(color, `${prefix}${lines[i]}`);
+  }
+  return rendered.join("\n");
+}
+
 function renderPatch(patch: ApplyEditsPatch, theme: Theme): Text {
-  const oldText = patch.oldText.length === 0 ? "(new file)" : limitPatchText(patch.oldText);
-  const newText = limitPatchText(patch.newText);
+  const oldText = patch.oldText.length === 0 ? "(new file)" : patch.oldText;
   const text = [
     theme.fg("error", "--- old"),
-    oldText,
+    renderPatchLines(oldText, "- ", "error", theme),
     theme.fg("success", "+++ new"),
-    newText,
+    renderPatchLines(patch.newText, "+ ", "success", theme),
   ].join("\n");
   return new Text(text, 2, 0);
 }
