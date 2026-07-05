@@ -2,6 +2,12 @@
 
 <div align="center">
 
+<video src="animation/rlm_pi_explainer.mp4" controls width="854" poster="assets/hero.png"></video>
+
+</div>
+
+<div align="center">
+
 **Recursive Language Models (RLMs)**, implemented natively as a Pi extension —
 FULLY LOCAL.
 
