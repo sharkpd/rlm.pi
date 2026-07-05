@@ -19,11 +19,17 @@ export interface ApplyEditsFailure {
   readonly error: string;
 }
 
+export interface ApplyEditsPatch {
+  readonly oldText: string;
+  readonly newText: string;
+}
+
 export interface ApplyEditsFileStat {
   readonly path: string;
   readonly status: "applied" | "failed";
   readonly added: number;
   readonly removed: number;
+  readonly edits: readonly ApplyEditsPatch[];
 }
 
 export interface ApplyEditsDetails {
@@ -68,11 +74,22 @@ function aggregateLineStats(fileStats: readonly ApplyEditsFileStat[]): LineStats
   return Object.freeze({ added, removed });
 }
 
+function appendPatch(existing: readonly ApplyEditsPatch[], patch: ApplyEditsPatch | undefined): readonly ApplyEditsPatch[] {
+  if (patch === undefined) return existing;
+  const patches = new Array<ApplyEditsPatch>(existing.length + 1);
+  for (let i = 0; i < existing.length; i++) {
+    patches[i] = existing[i];
+  }
+  patches[existing.length] = patch;
+  return Object.freeze(patches);
+}
+
 function mergeFileStat(
   fileStatsByPath: Map<string, ApplyEditsFileStat>,
   path: string,
   status: ApplyEditsFileStat["status"],
   stats: LineStats,
+  patch?: ApplyEditsPatch,
 ): void {
   const existing = fileStatsByPath.get(path);
   const nextStatus: ApplyEditsFileStat["status"] = existing?.status === "failed" || status === "failed" ? "failed" : "applied";
@@ -81,6 +98,7 @@ function mergeFileStat(
     status: nextStatus,
     added: (existing?.added ?? 0) + stats.added,
     removed: (existing?.removed ?? 0) + stats.removed,
+    edits: appendPatch(existing?.edits ?? Object.freeze([]), patch),
   });
 }
 
@@ -126,13 +144,34 @@ function renderFileLine(fileStat: ApplyEditsFileStat, theme: Theme): Text {
   return new Text(`${glyph} ${theme.fg("dim", fileStat.path)} ${stats}`, 0, 0);
 }
 
+function limitPatchText(text: string): string {
+  const maxChars = 2_000;
+  return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+}
+
+function renderPatch(patch: ApplyEditsPatch, theme: Theme): Text {
+  const oldText = patch.oldText.length === 0 ? "(new file)" : limitPatchText(patch.oldText);
+  const newText = limitPatchText(patch.newText);
+  const text = [
+    theme.fg("error", "--- old"),
+    oldText,
+    theme.fg("success", "+++ new"),
+    newText,
+  ].join("\n");
+  return new Text(text, 2, 0);
+}
+
 function renderExpanded(details: ApplyEditsDetails, theme: Theme): Container {
   const container = new Container();
   const header = summarizeFiles(details);
   const headerColor = details.status === "error" ? "error" : "success";
   container.addChild(new Text(theme.fg(headerColor, header), 0, 0));
   for (let i = 0; i < details.fileStats.length; i++) {
-    container.addChild(renderFileLine(details.fileStats[i], theme));
+    const fileStat = details.fileStats[i];
+    container.addChild(renderFileLine(fileStat, theme));
+    for (let editIndex = 0; editIndex < fileStat.edits.length; editIndex++) {
+      container.addChild(renderPatch(fileStat.edits[editIndex], theme));
+    }
   }
   if (details.errors.length > 0) {
     const rows = new Array<string>(details.errors.length);
@@ -174,7 +213,7 @@ export function createApplyEditsTool(editRegistry: EditRegistry): ToolDefinition
           if (edit.oldText.length === 0) {
             await mkdir(dirname(fullPath), { recursive: true });
             await writeFile(fullPath, edit.newText, "utf8");
-            mergeFileStat(fileStatsByPath, edit.path, "applied", diffStats("", edit.newText));
+            mergeFileStat(fileStatsByPath, edit.path, "applied", diffStats("", edit.newText), { oldText: edit.oldText, newText: edit.newText });
             editRegistry.delete(id);
             appliedCount++;
             continue;
@@ -184,7 +223,7 @@ export function createApplyEditsTool(editRegistry: EditRegistry): ToolDefinition
           const occurrences = countOccurrences(content, edit.oldText);
           if (occurrences !== 1) {
             errors[failedCount] = { id, path: edit.path, error: formatError(`anchor occurs ${occurrences} times in ${edit.path}`) };
-            mergeFileStat(fileStatsByPath, edit.path, "failed", { added: 0, removed: 0 });
+            mergeFileStat(fileStatsByPath, edit.path, "failed", { added: 0, removed: 0 }, { oldText: edit.oldText, newText: edit.newText });
             failedCount++;
             continue;
           }
@@ -197,13 +236,13 @@ export function createApplyEditsTool(editRegistry: EditRegistry): ToolDefinition
             undefined,
             ctx,
           );
-          mergeFileStat(fileStatsByPath, edit.path, "applied", diffStats(content, after));
+          mergeFileStat(fileStatsByPath, edit.path, "applied", diffStats(content, after), { oldText: edit.oldText, newText: edit.newText });
           editRegistry.delete(id);
           appliedCount++;
         } catch (error: unknown) {
           const path = edit.path;
           errors[failedCount] = { id, path, error: formatError(errorMessage(error)) };
-          mergeFileStat(fileStatsByPath, path, "failed", { added: 0, removed: 0 });
+          mergeFileStat(fileStatsByPath, path, "failed", { added: 0, removed: 0 }, { oldText: edit.oldText, newText: edit.newText });
           failedCount++;
         }
       }
