@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<video src="animation/rlm_pi_explainer.mp4" controls width="854" poster="assets/hero.png"></video>
+<video src="https://github.com/openzebra/rlm.pi/raw/refs/heads/master/animation/rlm_pi_explainer.mp4" controls width="854" poster="assets/hero.png"></video>
 
 </div>
 
