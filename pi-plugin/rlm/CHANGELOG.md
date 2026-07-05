@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-07-06
+
+### Added
+
+- Edit-by-reference workflow: `stage_edit` returns edit IDs; new `apply_edits({ids})` tool applies staged edits by ID.
+- Answer-by-reference via `details.finalAnswer` field.
+- `EditRegistry` with sandbox-lifecycle automatic clear on sandbox discard/new sandbox.
+- `ProposedEdit.id` protocol field for stable edit identification.
+- `onSandboxDiscarded` hook on `SandboxManager` for lifecycle cleanup.
+- Tests for `apply_edits`, answer submission, and registry lifecycle.
+
+### Changed
+
+- Updated system prompt to use `apply_edits({ids})` instead of relaying edits verbatim.
+
 ## [0.1.5] - 2026-07-04
 
 ### Added
