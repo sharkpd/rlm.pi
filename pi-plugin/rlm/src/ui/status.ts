@@ -1,7 +1,7 @@
 /** Footer status line for RLM mode and active runs. */
 
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionUIContext } from "@gsd/pi-coding-agent";
+import type { Api, Model } from "@gsd/pi-ai";
 import type { RlmController } from "../mode/rlm-mode.ts";
 
 const KEY = "rlm";

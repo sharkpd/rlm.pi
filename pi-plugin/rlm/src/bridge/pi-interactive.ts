@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import type { InteractiveDeps } from "../core/types.ts";
 import type { AskAnswer, AskQuestion } from "../sandbox/protocol.ts";
 import { formatError } from "../util/errors.ts";

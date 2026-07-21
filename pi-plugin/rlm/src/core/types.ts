@@ -1,6 +1,6 @@
 /** Shared configuration + runtime types for the RLM engine. */
 
-import type { ThinkingLevel } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@gsd/pi-ai";
 import type { AskAnswer, AskQuestion, ProposedEdit } from "../sandbox/protocol.ts";
 import type { ReconstructResult } from "../state/resume.ts";
 

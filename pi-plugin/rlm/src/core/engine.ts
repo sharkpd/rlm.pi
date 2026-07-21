@@ -11,8 +11,8 @@
  * measured validate→blueprint corrective routing.
  */
 
-import type { Api, Model, Usage } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { Api, Model, Usage } from "@gsd/pi-ai";
+import type { ModelRegistry } from "@gsd/pi-coding-agent";
 import { buildInteractiveHandlers } from "../bridge/interactive.ts";
 import { buildLibraryHandler } from "../bridge/library.ts";
 import { createLlmBridge } from "../bridge/llm-query.ts";

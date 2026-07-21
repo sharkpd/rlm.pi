@@ -7,8 +7,8 @@
  * fan-out are bounded, and batches run through a fixed-size concurrency pool.
  */
 
-import type { Api, Model, Usage } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { Api, Model, Usage } from "@gsd/pi-ai";
+import type { ModelRegistry } from "@gsd/pi-coding-agent";
 import type { RlmEmitter } from "../tool/rlm-events.ts";
 import { modelRef, resolveModelId } from "../config/settings.ts";
 import { checkResourceLimits, type RemainingResources } from "../core/resource-limits.ts";

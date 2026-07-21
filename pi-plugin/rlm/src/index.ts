@@ -1,8 +1,8 @@
 /** pi-rlm — Recursive Language Model for Pi. */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Markdown } from "@earendil-works/pi-tui";
+import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { getMarkdownTheme } from "@gsd/pi-coding-agent";
+import { Markdown } from "@gsd/pi-tui";
 import { registerRlmCommand } from "./commands/rlm.ts";
 import { registerRlmConfigCommand } from "./commands/rlm-config.ts";
 import { createRlmTool } from "./tool/rlm-tool.ts";

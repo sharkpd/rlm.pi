@@ -1,6 +1,6 @@
 /** Startup/help guide card for RLM mode. */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import type { RlmController } from "../mode/rlm-mode.ts";
 import { formatRlmStateLine } from "./status.ts";
 

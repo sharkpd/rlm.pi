@@ -1,5 +1,5 @@
-import { createEditToolDefinition, type AgentToolResult, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Container, Text, type Component } from "@earendil-works/pi-tui";
+import { createEditToolDefinition, type AgentToolResult, type Theme, type ToolDefinition } from "@gsd/pi-coding-agent";
+import { Container, Text, type Component } from "@gsd/pi-tui";
 import { Type } from "typebox";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";

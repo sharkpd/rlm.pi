@@ -1,10 +1,10 @@
 /** Model picker TUI — choose a model and, when supported, a thinking level. */
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import { Container, type Component, type SelectItem, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import type { ExtensionContext } from "@gsd/pi-coding-agent";
+import type { Api, Model, ThinkingLevel } from "@gsd/pi-ai";
+import { Container, type Component, type SelectItem, SelectList, Text, truncateToWidth } from "@gsd/pi-tui";
 import { formatCost } from "./theme.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
 
 export interface ModelSelection {
   readonly model: Model<Api>;

@@ -1,6 +1,6 @@
 /** `/rlm` — toggle persistent Recursive Language Model mode. */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { createPiInteractiveDeps } from "../bridge/pi-interactive.ts";
 import type { RlmController, RunHandle } from "../mode/rlm-mode.ts";
 import { postRlmGuide } from "../ui/intro.ts";

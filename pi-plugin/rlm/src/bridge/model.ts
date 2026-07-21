@@ -6,8 +6,8 @@
  * Used both for `llm_query` (one user prompt) and for the headless RLM root (full history).
  */
 
-import { type Api, completeSimple, type Message, type Model, type ThinkingLevel, type Usage } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { type Api, completeSimple, type Message, type Model, type ThinkingLevel, type Usage } from "@gsd/pi-ai";
+import type { ModelRegistry } from "@gsd/pi-coding-agent";
 
 export type Role = "system" | "user" | "assistant";
 export interface ChatMsg {

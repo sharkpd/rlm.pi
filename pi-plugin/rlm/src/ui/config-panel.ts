@@ -1,8 +1,8 @@
 /** Config panel TUI — toggle RLM run parameters with descriptions. */
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
+import type { ExtensionContext } from "@gsd/pi-coding-agent";
+import { getSettingsListTheme } from "@gsd/pi-coding-agent";
+import { Container, type SettingItem, SettingsList, Text } from "@gsd/pi-tui";
 import type { RlmConfig } from "../core/types.ts";
 
 const CHOICES = Object.freeze({

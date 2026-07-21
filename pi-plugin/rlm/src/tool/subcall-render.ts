@@ -6,10 +6,10 @@
  * used by their renderResult() implementations.
  */
 
-import { Container, Text, type Component } from "@earendil-works/pi-tui";
+import { Container, Text, type Component } from "@gsd/pi-tui";
 import type { RlmSubcall, SubcallStatus } from "./rlm-details.ts";
 import { formatCost, formatDuration, formatTokens, spinnerFrame } from "../ui/theme.ts";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@gsd/pi-coding-agent";
 
 // ── Glyphs ──
 

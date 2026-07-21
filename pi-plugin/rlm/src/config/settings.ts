@@ -2,8 +2,8 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { getAgentDir, type ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
+import { getAgentDir, type ModelRegistry } from "@gsd/pi-coding-agent";
+import type { Api, Model, ThinkingLevel } from "@gsd/pi-ai";
 import type { RlmConfig, RunLogConfig } from "../core/types.ts";
 import { DEFAULT_CONFIG } from "./defaults.ts";
 

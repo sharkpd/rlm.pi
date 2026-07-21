@@ -1,4 +1,4 @@
-import type { InputSource } from "@earendil-works/pi-coding-agent";
+import type { InputSource } from "@gsd/pi-coding-agent";
 
 export interface InputRouteState {
   readonly enabled: boolean;

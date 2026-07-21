@@ -5,8 +5,8 @@
  * onUpdate(partialResult) for progressive TUI re-rendering.
  */
 
-import { getMarkdownTheme, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text, type Component } from "@earendil-works/pi-tui";
+import { getMarkdownTheme, type Theme, type ToolDefinition } from "@gsd/pi-coding-agent";
+import { Container, Markdown, Spacer, Text, type Component } from "@gsd/pi-tui";
 import { Type } from "typebox";
 import { createPiInteractiveDeps } from "../bridge/pi-interactive.ts";
 import type { RlmController, StartInput } from "../mode/rlm-mode.ts";

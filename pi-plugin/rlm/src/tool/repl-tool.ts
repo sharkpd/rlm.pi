@@ -12,10 +12,10 @@
  */
 
 import { Type } from "typebox";
-import type { Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Container, Spacer, Text } from "@earendil-works/pi-tui";
-import type { Model, Usage, Api } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { Theme, ToolDefinition } from "@gsd/pi-coding-agent";
+import { Container, Spacer, Text } from "@gsd/pi-tui";
+import type { Model, Usage, Api } from "@gsd/pi-ai";
+import type { ModelRegistry } from "@gsd/pi-coding-agent";
 import { modelRef, resolveModelId } from "../config/settings.ts";
 import { buildInteractiveHandlers } from "../bridge/interactive.ts";
 import { buildLibraryHandler } from "../bridge/library.ts";

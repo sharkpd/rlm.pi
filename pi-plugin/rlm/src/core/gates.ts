@@ -4,7 +4,7 @@
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { parseFrontmatter } from "@gsd/pi-coding-agent";
 import type { Result } from "../util/errors.ts";
 
 /** Gate outcome — same shape as Result; alias keeps call sites domain-clear. */

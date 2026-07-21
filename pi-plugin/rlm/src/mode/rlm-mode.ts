@@ -6,8 +6,8 @@
  * the completion promise.
  */
 
-import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@gsd/pi-ai";
+import type { ExtensionContext, ModelRegistry } from "@gsd/pi-coding-agent";
 import { DEFAULT_RUN_DIR } from "../config/defaults.ts";
 import { modelRef, resolveModelId, saveSettings } from "../config/settings.ts";
 import { createEngine } from "../core/engine.ts";

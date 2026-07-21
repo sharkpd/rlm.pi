@@ -1,6 +1,6 @@
 /** `/rlm-config` — choose worker model, reasoning level, and run settings (smart is always pi's active model). */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { modelRef } from "../config/settings.ts";
 import { cheapestModel, type RlmController } from "../mode/rlm-mode.ts";
 import { setRlmModeStatus } from "../ui/status.ts";

@@ -4,8 +4,8 @@
  * not involved.)
  */
 
-import type { Api, Model, Usage } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { Api, Model, Usage } from "@gsd/pi-ai";
+import type { ModelRegistry } from "@gsd/pi-coding-agent";
 import { type ChatMsg, type CompleteOptions, type CompleteResult, modelComplete } from "../bridge/model.ts";
 import type { ReplResult } from "../sandbox/protocol.ts";
 import type { PythonSandbox } from "../sandbox/sandbox.ts";

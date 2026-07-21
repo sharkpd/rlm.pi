@@ -4,7 +4,7 @@
  * a LimitError; the engine catches it and returns the best partial answer it has.
  */
 
-import type { Usage } from "@earendil-works/pi-ai";
+import type { Usage } from "@gsd/pi-ai";
 
 export interface Limits {
   readonly maxTimeoutMs?: number;

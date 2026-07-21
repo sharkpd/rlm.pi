@@ -6,8 +6,8 @@
  * idea from DP sequence alignment). Keeps the system message + a fresh "continue" instruction.
  */
 
-import type { Api, Model, Usage } from "@earendil-works/pi-ai";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { Api, Model, Usage } from "@gsd/pi-ai";
+import type { ModelRegistry } from "@gsd/pi-coding-agent";
 import { type ChatMsg, modelComplete } from "../bridge/model.ts";
 import { estimateMessageTokens } from "../text/tokens.ts";
 
